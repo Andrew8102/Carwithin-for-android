@@ -30,7 +30,11 @@ public final class ZeehoOutput implements DashboardOutput {
         if (localIp == null) throw new IOException("未取得 Wi-Fi 地址");
         connection = new ZeehoConnection(localIp, null, identity,
                 context.getPackageName(), versionCode(context));
-        connection.start();
+        try {
+            connection.start();
+        } catch (GeneralSecurityException e) {
+            throw new IOException("仪表会话握手失败", e);
+        }
     }
 
     @Override
