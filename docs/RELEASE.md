@@ -1,13 +1,40 @@
 # 自动构建与发布
 
-## 触发方式
+## 三种触发方式
 
-`.github/workflows/release.yml` 提供两种触发：
+`.github/workflows/release.yml` 覆盖三种场景：
 
-1. **打标签推送**（推荐）：本地执行 `git tag v0.3.0 && git push origin v0.3.0`
-2. **手动触发**：GitHub 仓库 → Actions → `Release APK` → Run workflow
+| 触发 | 产物 | 版本号 | 发布位置 |
+| --- | --- | --- | --- |
+| **推送 `v*` tag**（正式发版） | 正式版 | tag 去掉 `v`，如 `v0.3.0` → `0.3.0` | 独立 Release（非 prerelease） |
+| **推送 main**（日常开发） | 开发预览版 | `carwithin.version` + `-dev.<构建号>`，如 `0.3.0-dev.42` | 滚动更新 `dev-latest` prerelease |
+| **手动触发** | 填了 tag → 正式版；留空 → 预览版 | 同上 | 同上 |
 
-两者都会构建 release APK，创建 GitHub Release 并上传 APK。
+正式发版：
+
+```bash
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+> `dev-latest` 是 **pre-release**，GitHub 的 `/releases/latest` 接口和仓库首页的
+> 「Latest」标记都会跳过 prerelease，所以首页仍显示最近一个正式版。要拿最新预览包，
+> 直接进 Releases 页面找 **开发预览版 · 自动构建** 那一条。
+> `pull_request` 只跑 `android.yml` 做编译校验，不产出 Release。
+
+## 版本号规则
+
+版本号全部自动推导，无需手改 `build.gradle.kts`：
+
+- **正式版**：版本号 = git tag（`RELEASE_TAG` 由 CI 注入），`v1.2.5` → `1.2.5`。
+- **预览版**：基线取 `gradle.properties` 里的 `carwithin.version`，加上 `-dev.<构建号>`。
+  若该版本不大于最近一个 tag（说明这版已经发过了），自动把 patch +1，
+  所以预览版永远比最近发布版本新，不会出现"版本号一直不更新"。
+- `versionCode = major*10000 + minor*100 + patch`（`0.3.0` → `300`）；
+  预览版与同基线正式版 `versionCode` 一致，两者可以互相覆盖安装。
+- 想给下一轮开发指定新基线时，改 `gradle.properties` 的 `carwithin.version` 即可。
+
+CI 日志里的 `Show APK version` 步骤会打印真正打进 APK 的 `versionName`/`versionCode`，
+`Verify APK signature` 步骤会用 `apksigner` 打印签名证书，可据此确认是否正式签名。
 
 ## 签名配置（正式签名）
 
@@ -41,15 +68,29 @@ debug 密钥 365 天到期且不同机器签名不一致，覆盖升级会失败
 配置后，CI 将 `KEYSTORE_BASE64` 解码为仓库根目录的 `release.jks`，
 `app/build.gradle.kts` 读取环境变量完成正式签名。
 
-## 版本号
+### 用 API 自动写入 Secrets
 
-`app/build.gradle.kts` 中的 `versionCode` / `versionName` 当前为 `3` / `0.3.0`。
-发布新版本前手动递增，或在 CI 中根据标签注入（尚未实现）。
+想免手点，可用 REST API 写入（需要 **fine-grained PAT 勾选 `Secrets: Read and write`**，
+或 classic PAT 带 `repo` 权限）：
+
+```bash
+# 1. 取仓库公钥
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://api.github.com/repos/<owner>/<repo>/actions/secrets/public-key
+# 2. 用返回的 key 做 libsodium sealed box 加密后 PUT
+curl -X PUT -H "Authorization: Bearer $TOKEN" \
+  https://api.github.com/repos/<owner>/<repo>/actions/secrets/KEY_ALIAS \
+  -d '{"encrypted_value":"<base64>","key_id":"<key_id>"}'
+```
+
+> 踩坑记录：只有 `Actions: write`（能触发 workflow）不代表能写 Secrets，
+> 缺 `Secrets: Read and write` 会返回 `403 Resource not accessible by personal access token`。
 
 ## 验证
 
 推送 workflow 后：
 
 - 打开 GitHub 仓库 → Actions 查看构建状态
-- 构建成功后 → Releases 页面查看 APK 附件
+- 构建成功后 → Releases 页面查看 APK 附件（正式版看 `v*`，预览版看 `dev-latest`）
 - 调试模式下 `./gradlew :app:assembleDebug` 仍可用
+
