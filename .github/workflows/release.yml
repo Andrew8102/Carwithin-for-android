@@ -1,6 +1,6 @@
 name: Release APK
 
-# Triggered by pushing a v* tag (e.g. v0.1.0) or manually from the Actions tab.
+# Triggered by pushing a v* tag (e.g. v0.3.0) or manually from the Actions tab.
 on:
   push:
     tags:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.1.0). Required for manual runs.'
+        description: 'Release tag (e.g. v0.3.0). Required for manual runs.'
         required: false
         default: ''
 
@@ -20,13 +20,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
@@ -40,6 +41,9 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > release.jks
+            echo "已写入 release.jks"
+          else
+            echo "未配置 KEYSTORE_BASE64，将使用 debug 签名"
           fi
 
       - name: Resolve release tag for versioning
@@ -47,7 +51,7 @@ jobs:
         run: |
           TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "使用版本 tag: $TAG"
+          echo "使用版本 tag: ${TAG:-<空，回退默认版本>}"
 
       - name: Build release APK
         env:
@@ -58,14 +62,27 @@ jobs:
           RELEASE_TAG: ${{ steps.ver.outputs.tag }}
         run: ./gradlew :app:assembleRelease --no-daemon
 
+      # 把打进 APK 的真实版本号打到 CI 日志，方便核对 tag 与版本是否一致。
+      - name: Show APK version
+        run: |
+          META=app/build/outputs/apk/release/output-metadata.json
+          if [ -f "$META" ]; then
+            cat "$META"
+          else
+            echo "未找到 output-metadata.json"
+          fi
+
       - name: Prepare artifact
         run: |
           mkdir -p dist
+          SUFFIX="${{ steps.ver.outputs.tag }}"
+          if [ -z "$SUFFIX" ]; then SUFFIX="$GITHUB_REF_NAME"; fi
           cp app/build/outputs/apk/release/app-release.apk \
-             "dist/carwithin-for-android-${GITHUB_REF_NAME}.apk"
+             "dist/carwithin-for-android-${SUFFIX}.apk"
+          ls -l dist
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: app-release
           path: dist/*.apk
@@ -73,7 +90,7 @@ jobs:
       # Tag pushes use the git tag; manual runs use the "tag" input.
       - name: Publish GitHub Release
         if: ${{ github.ref_type == 'tag' || inputs.tag != '' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           files: dist/*.apk
