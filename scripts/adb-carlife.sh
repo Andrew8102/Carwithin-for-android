@@ -11,6 +11,8 @@
 #   ./scripts/adb-carlife.sh dbg <命令> [秒数]    广播驱动 debug 包，不用手点屏幕
 #       命令：connect | connect-launch | testpattern | stop | state | diagnose
 #       例：./scripts/adb-carlife.sh dbg connect 15
+#   ./scripts/adb-carlife.sh fresh [秒数]         冷启动一把梭：杀 Car+/CarLife → 直连 → 盯日志
+#       Car+ 已在后台跑过时，CarLife 只会停在「OPPO 智行」启动页；必须先结束它。
 #
 # 环境变量：CAR_PKG（默认 com.oplus.ocar）、APP_PKG（默认 com.github.carwithinforandroid）
 set -uo pipefail
@@ -56,6 +58,9 @@ CarWithin 真机调试助手（便携 adb，无需安装 Android SDK）
   ./scripts/adb-carlife.sh dbg <命令> [秒数]    广播驱动 debug 包，不用手点屏幕
       命令：connect | connect-launch | testpattern | stop | state | diagnose
       例：./scripts/adb-carlife.sh dbg connect 15
+  ./scripts/adb-carlife.sh fresh [秒数]         冷启动：结束 Car+/CarLife → 直连 → 盯日志
+      为什么需要 fresh：Car+ 已在后台运行过时，重新连接只会停在
+      「OPPO 智行 / 百度 CarLife+」启动页，必须让它冷启动才会进入车机桌面。
 
 环境变量：CAR_PKG（默认 com.oplus.ocar）、APP_PKG（默认 com.github.carwithinforandroid）、
           ADB_BIN（自定义 adb 路径）
@@ -206,13 +211,33 @@ cmd_logs() {
 
 cmd_install() {
   require_device
-  local apk="${1:-$ROOT/dist/CarWithin-0.4.2-dev19-debug.apk}"
-  [ -f "$apk" ] || { echo "APK 不存在：$apk"; return 1; }
+  local apk="${1:-}"
+  if [ -z "$apk" ]; then
+    # 默认取 dist/ 下最新的 debug 包，避免脚本里写死版本号后被遗忘
+    apk=$(ls -t "$ROOT"/dist/CarWithin-*-debug.apk 2>/dev/null | head -1)
+  fi
+  [ -n "$apk" ] && [ -f "$apk" ] || { echo "APK 不存在：${apk:-dist/ 下没有 CarWithin-*-debug.apk}"; return 1; }
   echo "卸载旧包（签名不同必须卸）…"
   "$ADB" uninstall "$APP_PKG" >/dev/null 2>&1
   echo "安装 $(basename "$apk")"
   "$ADB" install -r -g "$apk"
   "$ADB" shell dumpsys package "$APP_PKG" | grep -E "versionName|versionCode" | head -2 | tr -d '\r'
+}
+
+# 冷启动一把梭：Car+ 之前在后头跑过时，CarLife 只会停在「OPPO 智行」启动页。
+# 根因是 CarLife 在 Car+ 已完成初始化后才接手，虚拟显示里画的还是自己的启动图。
+# 结束 Car+ 及其连接进程 → 让本应用先在 7 个端口上等 → 再拉起 Car+，画面才会进车机桌面。
+cmd_fresh() {
+  require_device
+  local secs="${1:-30}"
+  echo "== 结束 Car+ / CarLife =="
+  "$ADB" shell am broadcast -a "com.github.carwithinforandroid.DEBUG.STOP" -p "$APP_PKG" >/dev/null 2>&1
+  for p in "$CAR_PKG" "com.baidu.carlife" "com.baidu.carlife.oppo"; do
+    "$ADB" shell am force-stop "$p" >/dev/null 2>&1
+    echo "  force-stop $p"
+  done
+  sleep 1
+  cmd_dbg connect-launch "$secs"
 }
 
 cmd_shot() {
@@ -238,7 +263,10 @@ cmd_dbg() {
   esac
   "$ADB" logcat -c >/dev/null 2>&1
   echo "== 发送 DEBUG.$action =="
-  "$ADB" shell am broadcast -a "com.github.carwithinforandroid.DEBUG.$action" 2>&1 | tr -d '\r' | head -2
+  # 必须 -p 指定包名：自定义 action 的隐式广播在 Android 8+ 不会唤醒清单里的 receiver；
+  # 加 -f 0x20（FLAG_INCLUDE_STOPPED_PACKAGES）让刚装完还没启动过的包也能收到。
+  "$ADB" shell am broadcast -a "com.github.carwithinforandroid.DEBUG.$action" \
+    -p "$APP_PKG" -f 0x00000020 2>&1 | tr -d '\r' | head -2
   echo "== 观察 ${secs}s =="
   if command -v timeout >/dev/null 2>&1; then
     timeout "$secs" "$ADB" logcat -s CarWithin 2>/dev/null | tr -d '\r' | grep -v '^-----'
@@ -258,5 +286,6 @@ case "${1:-}" in
   install) shift; cmd_install "${1:-}" ;;
   shot) shift; cmd_shot "${1:-}" ;;
   dbg) shift; cmd_dbg "${1:-state}" "${2:-10}" ;;
+  fresh) shift; cmd_fresh "${1:-30}" ;;
   *) usage ;;
 esac

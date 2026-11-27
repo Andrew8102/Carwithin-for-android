@@ -89,11 +89,14 @@ android {
 
     buildTypes {
         getByName("debug") {
-            // 调试包与正式版同包名（便于用同一份配置/授权复现问题），
-            // 但 debug 签名与正式签名不同，安装前必须先卸载正式版。
+            // 调试包与正式版同包名（便于用同一份配置/授权复现问题）。
             versionNameSuffix = "-debug"
             isMinifyEnabled = false
             isDebuggable = true
+            // 有正式密钥时 debug 包也用同一把钥匙签：
+            // CI 每次构建都会新建 debug.keystore，签名一变就必须先卸载才能升级，
+            // 那样每次装包都要丢数据、重给权限；用正式密钥后 debug ↔ release 可互相覆盖。
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
         getByName("release") {
             // 有正式密钥就用正式签名；没有则退回 debug 签名，保证 CI 仍能产出可安装的包。
