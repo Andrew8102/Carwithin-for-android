@@ -37,6 +37,7 @@ import com.github.carwithinforandroid.core.VehicleProfile;
 import com.github.carwithinforandroid.core.VideoFrame;
 import com.github.carwithinforandroid.launcher.CarAppLauncher;
 import com.github.carwithinforandroid.media.H264Decoder;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoNetwork;
 import com.github.carwithinforandroid.sources.screen.TestPatternSource;
 import com.github.carwithinforandroid.ui.PreviewView;
 
@@ -90,6 +91,9 @@ public class MainActivity extends Activity {
 
     private PreviewView previewView;
     private TextView previewHint;
+    /** 状态卡里的网卡摘要（p2p0/wlan0=IP），2 秒刷一次，避免每帧枚举网卡。 */
+    private String nicText = "";
+    private long nicAt;
     private volatile long lastTouchWarnMs;
     private H264Decoder decoder;
     private volatile int previewFrames;
@@ -894,7 +898,14 @@ public class MainActivity extends Activity {
         stateValue.setText(status);
         stateHint.setText(hintFor(status));
         stateValue.setTextColor(Color.parseColor(colorFor(status)));
-        detailValue.setText(session.detail());
+        // 网卡列表要显示出来：极核走 Wi-Fi Direct，只有 p2p0 才通得到仪表，
+        // 但 wlan0 永远有地址，不显示的话「没连上车机」这件事肉眼看不出来。
+        long now = System.currentTimeMillis();
+        if (now - nicAt > 2000) {
+            nicText = ZeehoNetwork.describe(this);
+            nicAt = now;
+        }
+        detailValue.setText(session.detail() + "\n网卡 " + nicText);
         statsValue.setText(FrameStats.get().report());
 
         boolean active = session.isActive();

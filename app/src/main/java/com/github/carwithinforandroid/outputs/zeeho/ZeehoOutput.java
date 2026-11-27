@@ -2,12 +2,11 @@ package com.github.carwithinforandroid.outputs.zeeho;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.net.wifi.WifiInfo;
-import android.net.wifi.WifiManager;
 import android.os.Build;
 
 import com.github.carwithinforandroid.core.DashboardOutput;
 import com.github.carwithinforandroid.core.FrameStats;
+import com.github.carwithinforandroid.core.LogBus;
 import com.github.carwithinforandroid.core.VehicleProfile;
 import com.github.carwithinforandroid.core.VideoFrame;
 
@@ -37,8 +36,19 @@ public final class ZeehoOutput implements DashboardOutput {
         } catch (GeneralSecurityException e) {
             throw new IOException("本机身份初始化失败", e);
         }
-        String localIp = localIp(context);
-        if (localIp == null) throw new IOException("未取得 Wi-Fi 地址，请先连接仪表 Wi-Fi");
+        // 极核跟仪表走 Wi-Fi Direct：真正能通的是 p2p0，而 WifiManager 只报 wlan0。
+        // 照 wlan0 去找，扫的是家里路由器，永远「未发现仪表」。
+        LogBus.log("本机网卡：" + ZeehoNetwork.describe(context));
+        ZeehoNetwork.Nic nic = ZeehoNetwork.best(context);
+        if (nic == null) {
+            throw new IOException("当前没有局域网（只有移动数据）。先在极核 App 点「投屏」把车机连上");
+        }
+        if (!ZeehoNetwork.hasDirect(context)) {
+            LogBus.log("提示：没有 p2p0。极核的车机链路是 App 发起的 Wi-Fi Direct，"
+                    + "要先去极核 App 点一次「投屏」，再回来点「重连仪表」");
+        }
+        String localIp = nic.ip;
+        LogBus.log("用 " + nic + " 去找仪表");
         String targetIp = VehicleProfile.targetIp(context);
         if (targetIp != null && targetIp.trim().isEmpty()) targetIp = null;
 
@@ -84,21 +94,6 @@ public final class ZeehoOutput implements DashboardOutput {
 
     public String targetIp() {
         return connection == null ? null : connection.targetIp();
-    }
-
-    private static String localIp(Context context) {
-        WifiManager wifi = (WifiManager) context.getApplicationContext()
-                .getSystemService(Context.WIFI_SERVICE);
-        if (wifi == null) return null;
-        try {
-            WifiInfo info = wifi.getConnectionInfo();
-            int value = info.getIpAddress();
-            if (value == 0) return null;
-            return (value & 0xff) + "." + ((value >> 8) & 0xff) + "."
-                    + ((value >> 16) & 0xff) + "." + ((value >> 24) & 0xff);
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     private static int versionCode(Context context) {

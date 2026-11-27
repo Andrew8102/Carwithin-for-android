@@ -1,0 +1,137 @@
+package com.github.carwithinforandroid.outputs.zeeho;
+
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.LinkAddress;
+import android.net.LinkProperties;
+import android.net.Network;
+
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+/**
+ * 选本机该用哪块网卡跟仪表说话。
+ *
+ * <p>极核手机端跟仪表是 <b>Wi-Fi Direct（P2P）</b>组网的：用户在极核 App 里点「投屏」，
+ * 由 App 发起 P2P 连接，系统自动完成配对，所以主观上「连车机 Wi-Fi 是无感的」——
+ * 它在系统设置里根本不是一个能手动选的热点。
+ *
+ * <p>这意味着连接其实建在 <b>p2p0</b> 上，而 {@code WifiManager.getConnectionInfo()} 读的是
+ * STA 接口（wlan0）。如果照它的 IP 去扫网段、去 bind，扫的是家里路由器，
+ * 仪表永远「未发现」。所以这里改成枚举系统里所有 Network，优先取 p2p0。
+ */
+public final class ZeehoNetwork {
+
+    private ZeehoNetwork() {
+    }
+
+    /** 一块网卡上的一个 IPv4 地址。 */
+    public static final class Nic {
+        public final String name;
+        public final String ip;
+
+        Nic(String name, String ip) {
+            this.name = name;
+            this.ip = ip;
+        }
+
+        @Override
+        public String toString() {
+            return name + "=" + ip;
+        }
+    }
+
+    /** 枚举所有非回环的 IPv4 地址（系统仍可能因为权限隐藏部分接口）。 */
+    public static List<Nic> all(Context context) {
+        List<Nic> out = new ArrayList<>();
+        try {
+            ConnectivityManager cm = (ConnectivityManager)
+                    context.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                for (Network network : cm.getAllNetworks()) {
+                    LinkProperties lp = cm.getLinkProperties(network);
+                    if (lp == null) continue;
+                    String ifname = lp.getInterfaceName();
+                    for (LinkAddress la : lp.getLinkAddresses()) {
+                        InetAddress addr = la.getAddress();
+                        if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                            out.add(new Nic(ifname == null ? "?" : ifname, addr.getHostAddress()));
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // 某些 ROM 上 ConnectivityManager 会抛 SecurityException，退回下面的接口枚举
+        }
+        if (out.isEmpty()) {
+            try {
+                for (NetworkInterface ni : Collections.list(NetworkInterface.getNetworkInterfaces())) {
+                    if (!ni.isUp() || ni.isLoopback()) continue;
+                    for (InetAddress addr : Collections.list(ni.getInetAddresses())) {
+                        if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
+                            out.add(new Nic(ni.getName(), addr.getHostAddress()));
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 枚举不了就只能报没网
+            }
+        }
+        return out;
+    }
+
+    /** 越小越优先。 */
+    private static int rank(String name) {
+        if (name == null) return 90;
+        String n = name.toLowerCase();
+        if (n.startsWith("p2p")) return 0;                       // Wi-Fi Direct，极核真正走的这条
+        if (n.startsWith("wlan")) return 10;                     // 普通 Wi-Fi
+        if (n.startsWith("ap") || n.startsWith("swlan") || n.startsWith("softap")) return 20;
+        if (n.startsWith("rmnet") || n.startsWith("ccmni") || n.startsWith("wwan")) return 80;
+        if (n.startsWith("tun") || n.startsWith("vgate") || n.startsWith("dummy")
+                || n.startsWith("ipsec") || n.startsWith("ppp")) return 85;
+        return 50;
+    }
+
+    /**
+     * 最可能通到仪表的本机地址。
+     *
+     * @return null 表示当前只有移动数据/VPN，没有能连仪表的局域网
+     */
+    public static Nic best(Context context) {
+        Nic best = null;
+        int bestRank = Integer.MAX_VALUE;
+        for (Nic nic : all(context)) {
+            int r = rank(nic.name);
+            if (r < bestRank) {
+                best = nic;
+                bestRank = r;
+            }
+        }
+        return bestRank >= 80 ? null : best;
+    }
+
+    /** 是否已经建立 Wi-Fi Direct（p2p0 有 IP）。false 表示极核那边还没点过投屏。 */
+    public static boolean hasDirect(Context context) {
+        for (Nic nic : all(context)) {
+            if (nic.name != null && nic.name.toLowerCase().startsWith("p2p")) return true;
+        }
+        return false;
+    }
+
+    /** 日志用：p2p0=192.168.49.1, wlan0=192.168.123.104 */
+    public static String describe(Context context) {
+        List<Nic> list = all(context);
+        if (list.isEmpty()) return "无 IPv4 地址";
+        StringBuilder sb = new StringBuilder();
+        for (Nic nic : list) {
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(nic);
+        }
+        return sb.toString();
+    }
+}

@@ -10,6 +10,7 @@ import com.github.carwithinforandroid.core.CastSession;
 import com.github.carwithinforandroid.core.LogBus;
 import com.github.carwithinforandroid.core.VehicleProfile;
 import com.github.carwithinforandroid.launcher.CarAppLauncher;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoNetwork;
 
 /**
  * 仅 debug 包可用的命令行入口。
@@ -103,6 +104,10 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                         LogBus.log("[debug] " + CarAppLauncher.describeActivities(app, VehicleProfile.launchPackage(app)));
                         int open = CarAppLauncher.countOpenPorts(300);
                         LogBus.log("[debug] CarLife 端口监听数 " + open + "/7");
+                        LogBus.log("[debug] 网卡 " + ZeehoNetwork.describe(app));
+                        LogBus.log("[debug] Wi-Fi Direct " + (ZeehoNetwork.hasDirect(app)
+                                ? "已建立（p2p0 有地址）"
+                                : "未建立 —— 必须在极核 App 里点一次「投屏」才会组网"));
                         LogBus.log("[debug] ==== 诊断结束 ====");
                     } catch (Throwable e) {
                         LogBus.log("[debug] 诊断异常：" + e);
