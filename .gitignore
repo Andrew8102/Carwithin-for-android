@@ -9,6 +9,8 @@ local.properties
 keystore.properties
 *.jks
 *.p12
+signing/
+*.pem
 *.apk
 .DS_Store
 .idea/

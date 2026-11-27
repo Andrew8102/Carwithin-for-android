@@ -75,6 +75,7 @@ public class MainActivity extends Activity {
     private Spinner patternSpinner;
     private CheckBox autoLaunchCheck;
     private Button startButton;
+    private Button carlifeButton;
     private Button stopButton;
     private Button testButton;
 
@@ -234,6 +235,15 @@ public class MainActivity extends Activity {
         });
         card.addView(startButton);
 
+        carlifeButton = button("CarLife 投屏（接收 Car+，无需录屏）", "#14B8A6");
+        carlifeButton.setOnClickListener(v -> {
+            if (VehicleProfile.autoLaunch(this)) {
+                doLaunch();
+            }
+            session.startCarLife(this, null);
+        });
+        card.addView(carlifeButton);
+
         testButton = button("用测试图验证出画（无需录屏授权）", "#8B5CF6");
         testButton.setOnClickListener(v -> session.startTest(this, null));
         card.addView(testButton);
@@ -245,7 +255,7 @@ public class MainActivity extends Activity {
         card.addView(stopButton);
 
         TextView hint = new TextView(this);
-        hint.setText("步骤：仪表开启投屏 → 手机连仪表 Wi-Fi → 拉起车机界面 → 开始投屏。测试图用于确认仪表能出画。");
+        hint.setText("步骤：仪表开启投屏 → 手机连仪表 Wi-Fi → 拉起车机界面。录屏投屏通用；CarLife 投屏接收 Car+ 原生 H.264（零转码、免录屏授权，需先打开 Car+）；测试图用于确认仪表能出画。");
         hint.setTextSize(11f);
         hint.setTextColor(Color.parseColor(MUTED));
         hint.setLineSpacing(0, 1.35f);
@@ -505,6 +515,7 @@ public class MainActivity extends Activity {
 
         boolean active = session.isActive();
         startButton.setEnabled(!active);
+        carlifeButton.setEnabled(!active);
         testButton.setEnabled(!active);
         stopButton.setEnabled(active);
 
@@ -520,10 +531,13 @@ public class MainActivity extends Activity {
     private static String hintFor(String status) {
         if ("STREAMING".equals(status)) return "视频流已推送至仪表，操作请在手机上完成。";
         if (status.startsWith("ERROR")) return "发生错误，请查看下方运行日志与 docs/TEST-PLAN.md。";
+        if (status.startsWith("CARLIFE")) {
+            return "CarLife 链路：等待 Car+ 在本机监听 7 个端口并完成握手。请确认已打开 OPPO Car+ 且未连接其他车机。";
+        }
         if ("STARTING".equals(status) || "WAITING_DASHBOARD".equals(status)) {
             return "正在与仪表协商，请确认仪表已开启投屏且未连其他手机。";
         }
-        return "尚未开始。可先用测试图验证出画，再开始录屏投屏。";
+        return "尚未开始。可先用测试图验证出画，再选择录屏或 CarLife 投屏。";
     }
 
     private static String colorFor(String status) {

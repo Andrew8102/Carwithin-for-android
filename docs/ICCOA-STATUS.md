@@ -26,6 +26,19 @@ ICCOA CarLink 是覆盖小米 CarWith、OPPO Car+ 车联、vivo Jovi InCar 的�
 
 在没有 SDK 前，阶段一使用 CarLife 栈接通 OPPO Car+；这条链路不需要专有 SDK。
 
+## 阶段一现状：CarLife 已实现（v0.3.0）
+
+OPPO Car+ 已改走 CarLife 车机端协议栈，不依赖 ICCOA SDK：
+
+- `sources/carlife/CarLifeLink.java`：自 CarNine 完整移植，七端口连接 + 版本协商 + MD5 身份证明 + RSA/AES 内容加密 + 视频帧接收，仅依赖 JDK。
+- `sources/carlife/H264.java`：Annex-B / AVCC 转换与关键帧识别。
+- `sources/carlife/CarLifePhoneSource.java`：把 CarLifeLink 包装成 `PhoneVideoSource`，接入 CastEngine。
+- UI「② 投屏控制」新增「CarLife 投屏」按钮，免录屏授权。
+
+**能力边界**：CarLife 覆盖 OPPO / 一加 / realme 等 ColorOS 带「Car+ 车联」的机型；
+小米 CarWith、vivo Jovi InCar 虽同属 ICCOA 生态，但其手机端是否开放等价 CarLife 端口未验证，
+暂用录屏路线。ICCOA 直连仍是长期方向，待合法 SDK 可用时启用 `IccoaPhoneSource` 槽位。
+
 ## 华为 HiCar
 
 HiCar 是另一套生态，不复用 ICCOA。`sources/hicar/` 目前只是占位，等 OPPO 与 ICCOA 稳定后再评估。

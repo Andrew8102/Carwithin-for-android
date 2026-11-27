@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 投屏图标：手机画面投到仪表屏。前景绘制在 108x108 画布的中心 66x66 安全区内。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 手机轮廓 -->
+    <path
+        android:pathData="M35,30 L73,30 A4,4 0 0,1 77,34 L77,62 A4,4 0 0,1 73,66 L35,66 A4,4 0 0,1 31,62 L31,34 A4,4 0 0,1 35,30 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.6"
+        android:fillColor="#00000000" />
+    <!-- 手机屏幕里的画面（山与太阳） -->
+    <path
+        android:pathData="M36,58 L46,47 L53,54 L62,43 L72,58 Z"
+        android:fillColor="#7DD3FC" />
+    <path
+        android:pathData="M64,38 A3.5,3.5 0 0,1 64,45 A3.5,3.5 0 0,1 64,38 Z"
+        android:fillColor="#FDE68A" />
+    <!-- 手机底部 Home 指示 -->
+    <path
+        android:pathData="M48,62 L60,62"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round" />
+
+    <!-- 投屏箭头（向下指向仪表） -->
+    <path
+        android:pathData="M54,69 L54,79 M48,74 L54,80 L60,74"
+        android:strokeColor="#4ADE80"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- 仪表屏（宽扁矩形） -->
+    <path
+        android:pathData="M28,82 L80,82 A3,3 0 0,1 83,85 L83,89 A3,3 0 0,1 80,92 L28,92 A3,3 0 0,1 25,89 L25,85 A3,3 0 0,1 28,82 Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.4"
+        android:fillColor="#00000000" />
+</vector>

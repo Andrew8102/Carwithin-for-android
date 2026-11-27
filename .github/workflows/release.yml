@@ -32,7 +32,8 @@ jobs:
         run: chmod +x gradlew
 
       # Optional: set KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD
-      # in repo Secrets to sign with your own key. Without them the APK uses debug signing.
+      # / KEYSTORE_TYPE in repo Secrets to sign with your own key (PKCS12 or JKS).
+      # Without them the APK falls back to debug signing.
       - name: Prepare signing keystore (optional)
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -46,6 +47,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_TYPE: ${{ secrets.KEYSTORE_TYPE || 'PKCS12' }}
         run: ./gradlew :app:assembleRelease --no-daemon
 
       - name: Prepare artifact

@@ -4,6 +4,7 @@ import android.content.Context;
 import android.media.projection.MediaProjection;
 
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoOutput;
+import com.github.carwithinforandroid.sources.carlife.CarLifePhoneSource;
 import com.github.carwithinforandroid.sources.screen.ScreenCaptureSource;
 import com.github.carwithinforandroid.sources.screen.TestPatternSource;
 
@@ -61,6 +62,15 @@ public final class CastSession {
         screenSource.bind(projection);
         currentSource = screenSource;
         begin(context, "屏幕采集");
+    }
+
+    /** 用 CarLife 车机端来源启动投屏：接收 Car+ 推出的 H.264，不需要录屏授权。 */
+    public void startCarLife(Context context, Listener listener) {
+        if (active.get()) return;
+        if (listener != null) this.listener = listener;
+        if (profile == null) configure(context);
+        currentSource = new CarLifePhoneSource(profile.width, profile.height, profile.fps);
+        begin(context, "CarLife 车机端");
     }
 
     /** 用测试图启动投屏，不需要录屏授权。 */
