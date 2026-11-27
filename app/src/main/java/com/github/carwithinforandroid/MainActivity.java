@@ -38,6 +38,7 @@ import com.github.carwithinforandroid.core.VideoFrame;
 import com.github.carwithinforandroid.launcher.CarAppLauncher;
 import com.github.carwithinforandroid.media.H264Decoder;
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoNetwork;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoP2p;
 import com.github.carwithinforandroid.sources.screen.TestPatternSource;
 import com.github.carwithinforandroid.ui.PreviewView;
 
@@ -354,6 +355,45 @@ public class MainActivity extends Activity {
      * <p>顺序不能反。实测 Car+ 被拉起后端口只开很短一瞬，等它开完再手动点「直连」时
      * 早就关了，只能等到超时。
      */
+    /**
+     * 自己建 Wi-Fi Direct，看能不能不经过极核 App 就把 P2P 组建起来。
+     *
+     * <p>关键假设：仪表只要停在「扫码投屏」那一页，就会以 GO 身份对外可见。
+     * 如果扫得到，就说明这条路能彻底甩掉极核 App；扫不到说明固件只在官方 App 下才开组，
+     * 那就只能借极核 App 建好的网络（点完投屏不要停，回来点「重连仪表」）。
+     */
+    private void startOwnP2p() {
+        if (!ZeehoP2p.hasPermission(this)) {
+            LogBus.log("缺权限：Android 13+ 需要「附近的设备」");
+            Toast.makeText(this, "请在系统设置里授予「附近的设备」权限", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (ZeehoNetwork.hasDirect(this)) {
+            LogBus.log("已有 p2p0（" + ZeehoNetwork.describe(this) + "），直接复用");
+            Toast.makeText(this, "已经连着 Wi-Fi Direct 了", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        LogBus.log("=== 自建 Wi-Fi Direct 开始 ===");
+        new Thread(() -> {
+            ZeehoP2p link = new ZeehoP2p(this);
+            String owner = link.connectToDashboard(20_000);
+            if (owner == null) {
+                LogBus.log("=== 没建成：仪表不在 P2P 可见状态 ===");
+                return;
+            }
+            for (int i = 0; i < 20 && !ZeehoNetwork.hasDirect(this); i++) {
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            LogBus.log("=== 成功：组主 " + owner + "，网卡 " + ZeehoNetwork.describe(this) + " ===");
+            LogBus.log("现在点「重连仪表」，它会在这个网络上找 10930");
+        }, "p2p-build").start();
+    }
+
     private void startCarlifeWithLaunch() {
         if (session.isActive()) {
             // 之前这里直接 return，界面上什么反应都没有，用户会以为按钮坏了。
@@ -505,6 +545,18 @@ public class MainActivity extends Activity {
         Button retryOutBtn = button("重连仪表（不改 CarLife 会话）", "#22C55E");
         retryOutBtn.setOnClickListener(safe("重连仪表", () -> session.retryOutput(this)));
         card.addView(retryOutBtn);
+
+        // 极核 App 是唯一会「建」Wi-Fi Direct 的东西，但它顺带把画面录走了。
+        // 这两个按钮验证：不带极核 App，我们自己能不能把 P2P 组和组主地址拿到。
+        Button p2pBtn = button("自建 Wi-Fi Direct（不经过极核 App）", "#0EA5E9");
+        p2pBtn.setOnClickListener(safe("自建 Wi-Fi Direct", this::startOwnP2p));
+        card.addView(p2pBtn);
+
+        Button p2pScanBtn = button("只扫描 P2P 设备（看仪表在不在）", "#64748B");
+        p2pScanBtn.setOnClickListener(safe("扫描 P2P", () -> {
+            new Thread(() -> new ZeehoP2p(this).connectToDashboard(15_000), "p2p-scan").start();
+        }));
+        card.addView(p2pScanBtn);
 
         stopButton = button("停止投屏", "#475569");
         stopButton.setEnabled(false);

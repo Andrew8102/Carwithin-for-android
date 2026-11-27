@@ -58,6 +58,8 @@ public final class ZeehoConnection {
 
     private final String localIp;
     private String targetIp;
+    /** 该在哪个网络上说话。null 表示用默认路由（单网卡时没问题，多网卡必翻车）。 */
+    private final android.net.Network network;
     private final ZeehoIdentity identity;
     private final String packageName;
     private final String phoneModel;
@@ -84,12 +86,19 @@ public final class ZeehoConnection {
     public ZeehoConnection(String localIp, String targetIp, ZeehoIdentity identity,
                            String packageName, int versionCode, String phoneModel, String osVersion) {
         this(localIp, targetIp, identity, packageName, versionCode, phoneModel, osVersion,
-                1024, 480, DEFAULT_DISCOVERY_PORT);
+                1024, 480, DEFAULT_DISCOVERY_PORT, null);
     }
 
     public ZeehoConnection(String localIp, String targetIp, ZeehoIdentity identity,
                            String packageName, int versionCode, String phoneModel, String osVersion,
                            int width, int height, int discoveryPort) {
+        this(localIp, targetIp, identity, packageName, versionCode, phoneModel, osVersion,
+                width, height, discoveryPort, null);
+    }
+
+    public ZeehoConnection(String localIp, String targetIp, ZeehoIdentity identity,
+                           String packageName, int versionCode, String phoneModel, String osVersion,
+                           int width, int height, int discoveryPort, android.net.Network network) {
         this.localIp = localIp;
         this.targetIp = targetIp;
         this.identity = identity;
@@ -100,11 +109,32 @@ public final class ZeehoConnection {
         this.width = width;
         this.height = height;
         this.discoveryPort = discoveryPort > 0 ? discoveryPort : DEFAULT_DISCOVERY_PORT;
+        this.network = network;
+    }
+
+    /**
+     * 把 socket 钉到选定网络上。
+     *
+     * <p>不做这一步，即使按 p2p0 的地址 bind 了源地址，出口仍按系统默认路由走，
+     * 包会从 wlan0 或移动数据发出去 —— 仪表那边什么也收不到（参考实现的 UdpLink 同样这么做）。
+     */
+    private void pin(java.io.Closeable socket) {
+        android.net.Network net = network;
+        if (net == null || socket == null) return;
+        try {
+            if (socket instanceof Socket) {
+                net.bindSocket((Socket) socket);
+            } else if (socket instanceof java.net.DatagramSocket) {
+                net.bindSocket((java.net.DatagramSocket) socket);
+            }
+        } catch (Exception e) {
+            LogBus.log("绑定网络失败（继续用默认路由）：" + e.getMessage());
+        }
     }
 
     public void start() throws IOException, GeneralSecurityException {
         if (targetIp == null || targetIp.isEmpty()) {
-            List<String> found = ZeehoDiscovery.discover(localIp, discoveryPort);
+            List<String> found = ZeehoDiscovery.discover(localIp, discoveryPort, network);
             if (found.isEmpty()) {
                 throw new IOException("未发现仪表：请连接仪表 Wi-Fi 并在仪表上开启投屏");
             }
@@ -141,6 +171,8 @@ public final class ZeehoConnection {
     private void announce() throws IOException {
         try (Socket socket = new Socket()) {
             socket.bind(new InetSocketAddress(localIp, 0));
+            // 关键：宣告包必须从选中那块网卡出去
+            pin(socket);
             socket.connect(new InetSocketAddress(targetIp, discoveryPort), 3000);
             JSONObject body = new JSONObject();
             try {
@@ -181,6 +213,7 @@ public final class ZeehoConnection {
             while (!closed) {
                 try {
                     Socket socket = server.accept();
+                    pin(socket);
                     peers.add(socket);
                     LogBus.log("仪表回连 TCP" + port);
                     pool.execute(() -> handler.handle(socket));

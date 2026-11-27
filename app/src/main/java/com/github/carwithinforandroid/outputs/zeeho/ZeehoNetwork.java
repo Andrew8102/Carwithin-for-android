@@ -29,14 +29,23 @@ public final class ZeehoNetwork {
     private ZeehoNetwork() {
     }
 
-    /** 一块网卡上的一个 IPv4 地址。 */
+    /** 一块网卡上的一个 IPv4 地址，附带它所属的 {@link Network}。 */
     public static final class Nic {
         public final String name;
         public final String ip;
+        /**
+         * 该地址所属的网络。可为 null（走接口枚举回退时拿不到）。
+         *
+         * <p>光有 IP 是不够的：Android 上 {@code socket.bind(ip, 0)} 只改源地址，
+         * 出口仍按默认路由走，于是发往仪表的包会从 wlan0/移动数据出去。
+         * 必须 {@code network.bindSocket(socket)} 才真正从这块网卡出。
+         */
+        public final Network network;
 
-        Nic(String name, String ip) {
+        Nic(String name, String ip, Network network) {
             this.name = name;
             this.ip = ip;
+            this.network = network;
         }
 
         @Override
@@ -59,7 +68,7 @@ public final class ZeehoNetwork {
                     for (LinkAddress la : lp.getLinkAddresses()) {
                         InetAddress addr = la.getAddress();
                         if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
-                            out.add(new Nic(ifname == null ? "?" : ifname, addr.getHostAddress()));
+                            out.add(new Nic(ifname == null ? "?" : ifname, addr.getHostAddress(), network));
                         }
                     }
                 }
@@ -73,7 +82,7 @@ public final class ZeehoNetwork {
                     if (!ni.isUp() || ni.isLoopback()) continue;
                     for (InetAddress addr : Collections.list(ni.getInetAddresses())) {
                         if (addr instanceof Inet4Address && !addr.isLoopbackAddress()) {
-                            out.add(new Nic(ni.getName(), addr.getHostAddress()));
+                            out.add(new Nic(ni.getName(), addr.getHostAddress(), null));
                         }
                     }
                 }
@@ -115,7 +124,16 @@ public final class ZeehoNetwork {
         return bestRank >= 80 ? null : best;
     }
 
-    /** 是否已经建立 Wi-Fi Direct（p2p0 有 IP）。false 表示极核那边还没点过投屏。 */
+    /** 指定网卡名对应的 Network；找不到返回 null。 */
+    public static Network networkOf(Context context, String ifname) {
+        if (ifname == null) return null;
+        for (Nic nic : all(context)) {
+            if (ifname.equalsIgnoreCase(nic.name) && nic.network != null) return nic.network;
+        }
+        return null;
+    }
+
+    /** 是否已经建立 Wi-Fi Direct（p2p0 有 IP）。false 表示还没有 P2P 组。 */
     public static boolean hasDirect(Context context) {
         for (Nic nic : all(context)) {
             if (nic.name != null && nic.name.toLowerCase().startsWith("p2p")) return true;

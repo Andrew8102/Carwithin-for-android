@@ -1,5 +1,7 @@
 package com.github.carwithinforandroid.outputs.zeeho;
 
+import android.net.Network;
+
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.ArrayList;
@@ -19,6 +21,14 @@ public final class ZeehoDiscovery {
     }
 
     public static List<String> discover(String localIp, int port) {
+        return discover(localIp, port, null);
+    }
+
+    /**
+     * @param network 要钉住的网络；null 走默认路由。多网卡（p2p0 + wlan0）时必须给，
+     *                否则探测包会从 wlan0 发出，扫不到 P2P 网段里的仪表。
+     */
+    public static List<String> discover(String localIp, int port, Network network) {
         String[] parts = localIp.split("\\.");
         if (parts.length != 4) return Collections.emptyList();
         String prefix = parts[0] + "." + parts[1] + "." + parts[2] + ".";
@@ -36,10 +46,17 @@ public final class ZeehoDiscovery {
             for (String ip : candidates) {
                 pool.execute(() -> {
                     try (Socket socket = new Socket()) {
+                        if (network != null) {
+                            try {
+                                network.bindSocket(socket);
+                            } catch (Exception ignored) {
+                                // 绑不上就试默认路由，至少不会整条扫描都失败
+                            }
+                        }
                         socket.connect(new InetSocketAddress(ip, port), 400);
                         found.add(ip);
                     } catch (Exception ignored) {
-                        // 扫描是best-effort，不是每个地址都会响应。
+                        // 扫描是 best-effort，不是每个地址都会响应。
                     }
                 });
             }

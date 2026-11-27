@@ -11,6 +11,8 @@ import com.github.carwithinforandroid.core.LogBus;
 import com.github.carwithinforandroid.core.VehicleProfile;
 import com.github.carwithinforandroid.launcher.CarAppLauncher;
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoNetwork;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoP2p;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoDiscovery;
 
 /**
  * 仅 debug 包可用的命令行入口。
@@ -25,6 +27,8 @@ import com.github.carwithinforandroid.outputs.zeeho.ZeehoNetwork;
  * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.STATE
  * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.DIAGNOSE
  * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.TESTPATTERN
+ * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.P2P_BUILD
+ * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.P2P_SCAN
  * </pre>
  *
  * <p>只有 debuggable 的包才响应，正式包直接忽略，避免留一个可被任意 App 触发的开关。
@@ -107,12 +111,63 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                         LogBus.log("[debug] 网卡 " + ZeehoNetwork.describe(app));
                         LogBus.log("[debug] Wi-Fi Direct " + (ZeehoNetwork.hasDirect(app)
                                 ? "已建立（p2p0 有地址）"
-                                : "未建立 —— 必须在极核 App 里点一次「投屏」才会组网"));
+                                : "未建立 —— 可以试 P2P_BUILD 自己建，或先去极核 App 点一次「投屏」"));
+                        LogBus.log("[debug] P2P 权限 " + (ZeehoP2p.hasPermission(app) ? "有" : "无（需要「附近的设备」/「位置信息」）"));
                         LogBus.log("[debug] ==== 诊断结束 ====");
                     } catch (Throwable e) {
                         LogBus.log("[debug] 诊断异常：" + e);
                     }
                 }, "debug-diag").start();
+                break;
+            }
+            case "P2P_BUILD": {
+                // 自己建 Wi-Fi Direct：验证不带极核 App 能不能把组建起来
+                new Thread(() -> {
+                    try {
+                        LogBus.log("[debug] ==== 自建 Wi-Fi Direct ====");
+                        if (!ZeehoP2p.hasPermission(app)) {
+                            LogBus.log("[debug] 缺权限，先授权：adb shell pm grant "
+                                    + app.getPackageName() + " android.permission.NEARBY_WIFI_DEVICES");
+                            return;
+                        }
+                        ZeehoP2p link = new ZeehoP2p(app);
+                        String owner = link.connectToDashboard(20_000);
+                        if (owner == null) {
+                            LogBus.log("[debug] 未建成：仪表不在 P2P 可见状态（可能只认官方 App 的请求）");
+                            return;
+                        }
+                        for (int i = 0; i < 20 && !ZeehoNetwork.hasDirect(app); i++) {
+                            Thread.sleep(300);
+                        }
+                        LogBus.log("[debug] 组主 " + owner + " | 网卡 " + ZeehoNetwork.describe(app));
+                        // 组主地址就是仪表，直接拿它去敲 10930，省掉扫 254 个地址
+                        boolean reachable;
+                        try (java.net.Socket probe = new java.net.Socket()) {
+                            if (link.network() != null) link.network().bindSocket(probe);
+                            probe.connect(new java.net.InetSocketAddress(owner,
+                                    ZeehoDiscovery.DISCOVERY_PORT), 1500);
+                            reachable = true;
+                        } catch (Exception e) {
+                            reachable = false;
+                        }
+                        LogBus.log("[debug] 仪表 " + owner + ":" + ZeehoDiscovery.DISCOVERY_PORT
+                                + " " + (reachable ? "有响应，可以点「重连仪表」" : "无响应（仪表的投屏服务没开）"));
+                    } catch (Throwable e) {
+                        LogBus.log("[debug] P2P_BUILD 异常：" + e);
+                    }
+                }, "debug-p2p").start();
+                break;
+            }
+            case "P2P_SCAN": {
+                new Thread(() -> {
+                    try {
+                        LogBus.log("[debug] ==== 扫描 P2P 设备 ====");
+                        new ZeehoP2p(app).connectToDashboard(15_000);
+                        LogBus.log("[debug] ==== 扫描结束 ====");
+                    } catch (Throwable e) {
+                        LogBus.log("[debug] P2P_SCAN 异常：" + e);
+                    }
+                }, "debug-p2p-scan").start();
                 break;
             }
             default:
@@ -127,7 +182,7 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
 
     /** 供调试文档引用的命令清单。 */
     public static String usage() {
-        return "am broadcast -a " + PREFIX + "{CARLIFE_CONNECT|CARLIFE_CONNECT_LAUNCH|TESTPATTERN|STOP|STATE|DIAGNOSE}"
+        return "am broadcast -a " + PREFIX + "{CARLIFE_CONNECT|CARLIFE_CONNECT_LAUNCH|TESTPATTERN|STOP|STATE|DIAGNOSE|P2P_BUILD|P2P_SCAN}"
                 + "  [--es pkg com.oplus.ocar]   (需要 debuggable 包, 当前 API " + Build.VERSION.SDK_INT + ")";
     }
 }
