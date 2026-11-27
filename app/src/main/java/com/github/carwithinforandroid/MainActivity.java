@@ -106,7 +106,6 @@ public class MainActivity extends Activity {
         addStatusCard(root);
         addStatsCard(root);
         addVehicleCard(root);
-        addDebugCard(root);
         addLogCard(root);
         addFooter(root);
         setContentView(scroll);
