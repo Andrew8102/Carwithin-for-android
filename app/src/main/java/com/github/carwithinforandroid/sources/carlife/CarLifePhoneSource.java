@@ -50,6 +50,9 @@ public final class CarLifePhoneSource implements PhoneVideoSource {
     private volatile CarLifeLink link;
     private volatile Callback callback;
     private volatile String phase = "CARLIFE_IDLE";
+    /** 手机实际给的画布尺寸（VIDEO_INIT_DONE 回填）；0 表示还没协商出来。 */
+    private volatile int canvasW;
+    private volatile int canvasH;
 
     public CarLifePhoneSource(int width, int height, int fps) {
         this.width = width;
@@ -74,6 +77,8 @@ public final class CarLifePhoneSource implements PhoneVideoSource {
 
             @Override
             public void onVideoInit(int w, int h, int actualFps) {
+                canvasW = w;
+                canvasH = h;
                 LogBus.log("CarLife 画布协商：" + w + "x" + h + "@" + actualFps + "（请求 " + width + "x" + height + "@" + fps + "）");
                 setState("CARLIFE 画布 " + w + "x" + h + "@" + actualFps);
             }
@@ -110,6 +115,27 @@ public final class CarLifePhoneSource implements PhoneVideoSource {
     public boolean requestKeyframe() {
         CarLifeLink current = link;
         return current != null && current.requestKeyframe();
+    }
+
+    /** 手机实际画布宽度；0 表示尚未协商出画布。 */
+    public int canvasWidth() {
+        return canvasW;
+    }
+
+    public int canvasHeight() {
+        return canvasH;
+    }
+
+    /**
+     * 把本机预览上的手指动作回传给手机（CarLife TOUCH 通道 9340）。
+     *
+     * @param action {@link android.view.MotionEvent} 的 action 常量
+     * @param x      画布像素坐标（0..canvasWidth-1）
+     * @param y      画布像素坐标（0..canvasHeight-1）
+     */
+    public boolean touch(int action, int x, int y) {
+        CarLifeLink current = link;
+        return current != null && current.touch(action, x, y);
     }
 
     @Override

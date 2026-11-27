@@ -90,6 +90,7 @@ public class MainActivity extends Activity {
 
     private PreviewView previewView;
     private TextView previewHint;
+    private volatile long lastTouchWarnMs;
     private H264Decoder decoder;
     private volatile int previewFrames;
     private volatile int previewLuma = -1;
@@ -556,6 +557,17 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(170));
         lp.topMargin = dp(10);
         previewView.setLayoutParams(lp);
+        // 触控回传：预览上的手指动作换算成 CarLife 画布像素，走 TOUCH 通道发回手机。
+        // 没有 CarLife 会话时（录屏/测试图/未连通）静默丢弃，最多 3 秒提示一次。
+        previewView.setTouchSink((action, x, y) -> {
+            boolean ok = session.touch(action, x, y);
+            if (!ok && action == android.view.MotionEvent.ACTION_DOWN
+                    && System.currentTimeMillis() - lastTouchWarnMs > 3000) {
+                lastTouchWarnMs = System.currentTimeMillis();
+                LogBus.log("触控未发送：当前没有可触控的 CarLife 会话（先让它连通出画）");
+            }
+            return ok;
+        });
         card.addView(previewView);
 
         previewHint = new TextView(this);
@@ -605,9 +617,15 @@ public class MainActivity extends Activity {
     private void onSourceFrame(VideoFrame frame) {
         H264Decoder d = decoder;
         if (d == null || frame == null || frame.accessUnit == null) return;
-        VehicleProfile p = session.profile();
-        int w = p == null ? 1024 : p.width;
-        int h = p == null ? 480 : p.height;
+        // 尺寸优先用 CarLife 实际协商出来的画布（848x480），
+        // 不能用车型 profile 的 1024x480——两者比例不同，配错了预览会被拉伸。
+        int w = session.carlifeCanvasWidth();
+        int h = session.carlifeCanvasHeight();
+        if (w <= 0 || h <= 0) {
+            VehicleProfile p = session.profile();
+            w = p == null ? 848 : p.width;
+            h = p == null ? 480 : p.height;
+        }
         d.feed(frame.accessUnit, 0, frame.accessUnit.length, frame.ptsMs * 1000L, w, h);
     }
 
@@ -894,9 +912,14 @@ public class MainActivity extends Activity {
 
     private void renderPreviewHint() {
         if (previewHint == null) return;
+        // 画布尺寸以手机实际协商出来的为准（848x480），否则等比绘制和触控坐标都会偏。
+        int cw = session.carlifeCanvasWidth();
+        int chh = session.carlifeCanvasHeight();
+        if (cw > 0 && chh > 0 && previewView != null) previewView.setAspect(cw, chh);
         String push = session.outputReady() ? "推极核：开" : "推极核：关（仅本地预览）";
         if (previewFrames > 0) {
-            previewHint.setText("已解码 " + previewFrames + " 帧 · 平均亮度 " + previewLuma + " · " + push);
+            previewHint.setText("已解码 " + previewFrames + " 帧 · 平均亮度 " + previewLuma
+                    + " · " + push + "\n在画面上直接点/滑即可操作车机（触控回传 TOUCH 通道）");
         } else if (!session.isActive()) {
             previewHint.setText("尚未收到 Car+ 画面。CarLife 链路一旦收到帧，这里会直接显示。");
         } else if (decoder != null && decoder.isStarted()) {

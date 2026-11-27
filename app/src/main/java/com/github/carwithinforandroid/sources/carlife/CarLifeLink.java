@@ -635,7 +635,10 @@ public final class CarLifeLink {
         int messageId;
         if (action == android.view.MotionEvent.ACTION_DOWN) {
             messageId = MSG_TOUCH_DOWN;
-        } else if (action == android.view.MotionEvent.ACTION_UP) {
+        } else if (action == android.view.MotionEvent.ACTION_UP
+                || action == android.view.MotionEvent.ACTION_CANCEL) {
+            // CANCEL 也要按 UP 发：手指划出预览范围或手势被打断时，
+            // 手机侧如果收不到 UP 会一直保持按下状态，后续点击全部失效。
             messageId = MSG_TOUCH_UP;
         } else {
             messageId = MSG_TOUCH_MOVE;
@@ -644,6 +647,10 @@ public final class CarLifeLink {
         int chh = Math.max(1, canvasHeight);
         int px = Math.max(0, Math.min(cw - 1, x));
         int py = Math.max(0, Math.min(chh - 1, y));
+        if (messageId != MSG_TOUCH_MOVE) {
+            // 只记按下/抬起，滑动太密会刷满日志
+            d("TX TOUCH " + (messageId == MSG_TOUCH_DOWN ? "down" : "up") + " " + px + "," + py);
+        }
         synchronized (touchQueue) {
             if (messageId == MSG_TOUCH_MOVE && touchQueue.size() > 8) {
                 return true; // 手势跟手优先：积压时丢弃过时的 MOVE

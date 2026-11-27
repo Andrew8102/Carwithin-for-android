@@ -182,6 +182,34 @@ public final class CastSession {
         return currentSource == null ? "" : currentSource.status();
     }
 
+    /* ---------------- CarLife 画布与触控 ---------------- */
+
+    private CarLifePhoneSource carlifeSource() {
+        PhoneVideoSource s = currentSource;
+        return s instanceof CarLifePhoneSource ? (CarLifePhoneSource) s : null;
+    }
+
+    /** 手机实际画布宽度（未协商出来时返回 0）。预览按它等比绘制，触控按它换算坐标。 */
+    public int carlifeCanvasWidth() {
+        CarLifePhoneSource s = carlifeSource();
+        return s == null ? 0 : s.canvasWidth();
+    }
+
+    public int carlifeCanvasHeight() {
+        CarLifePhoneSource s = carlifeSource();
+        return s == null ? 0 : s.canvasHeight();
+    }
+
+    /**
+     * 把预览上的手指动作回传给手机。坐标必须是画布像素。
+     *
+     * @return false 表示当前没有可触控的 CarLife 会话（录屏/测试图/CarLife 未连上）
+     */
+    public boolean touch(int action, int x, int y) {
+        CarLifePhoneSource s = carlifeSource();
+        return s != null && s.touch(action, x, y);
+    }
+
     private void notifyChanged() {
         Listener current = listener;
         if (current != null) {
