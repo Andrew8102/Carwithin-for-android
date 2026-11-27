@@ -4,7 +4,6 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.hardware.display.VirtualDisplay;
-import android.hardware.display.VirtualDisplayCallback;
 import android.media.projection.MediaProjection;
 import android.view.Surface;
 
@@ -29,7 +28,7 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
     private static final int DENSITY = 160;
 
     private MediaProjection projection;
-    private VirtualDisplayCallback displayCallback;
+    private VirtualDisplay.Callback displayCallback;
     private MediaCodec codec;
     private VirtualDisplay virtualDisplay;
     private Thread encoderThread;
@@ -58,7 +57,7 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
             Surface surface = codec.createInputSurface();
             codec.start();
 
-            displayCallback = new VirtualDisplayCallback() {
+            displayCallback = new VirtualDisplay.Callback() {
                 @Override
                 public void onStopped() {
                     LogBus.log("系统停止了录屏虚拟显示");
@@ -98,12 +97,12 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
             if (index == MediaCodec.INFO_TRY_AGAIN_LATER || index < 0) continue;
 
             byte[] data;
+            ByteBuffer buffer = codec.getOutputBuffer(index);
+            if (buffer == null) {
+                codec.releaseOutputBuffer(index, false);
+                continue;
+            }
             try {
-                ByteBuffer buffer = codec.getOutputBuffer(index);
-                if (buffer == null) {
-                    codec.releaseOutputBuffer(index, false);
-                    continue;
-                }
                 data = new byte[info.size];
                 buffer.position(info.offset);
                 buffer.limit(info.offset + info.size);

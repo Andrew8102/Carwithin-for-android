@@ -38,7 +38,7 @@ public final class CastSession {
 
     public void start(Context context, MediaProjection projection, Listener listener) {
         if (active.get()) return;
-        this.listener = listener;
+        if (listener != null) this.listener = listener;
         source.bind(projection);
         engine.attach(source, output);
         active.set(true);
