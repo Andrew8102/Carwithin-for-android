@@ -1,0 +1,55 @@
+package com.github.carwithinforandroid.outputs.zeeho;
+
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+/** 在手机所在 /24 网段扫描仪表发现端口。移植自 CarWithin App/TailingDiscovery.swift 的简化版。 */
+public final class ZeehoDiscovery {
+
+    public static final int DISCOVERY_PORT = 10930;
+
+    private ZeehoDiscovery() {
+    }
+
+    public static List<String> discover(String localIp, int port) {
+        String[] parts = localIp.split("\\.");
+        if (parts.length != 4) return Collections.emptyList();
+        String prefix = parts[0] + "." + parts[1] + "." + parts[2] + ".";
+        int self = Integer.parseInt(parts[3]);
+
+        List<String> candidates = new ArrayList<>();
+        candidates.add(prefix + "1");
+        for (int i = 1; i <= 254; i++) {
+            if (i != self) candidates.add(prefix + i);
+        }
+
+        CopyOnWriteArrayList<String> found = new CopyOnWriteArrayList<>();
+        ExecutorService pool = Executors.newFixedThreadPool(16);
+        try {
+            for (String ip : candidates) {
+                pool.execute(() -> {
+                    try (Socket socket = new Socket()) {
+                        socket.connect(new InetSocketAddress(ip, port), 400);
+                        found.add(ip);
+                    } catch (Exception ignored) {
+                        // 扫描是best-effort，不是每个地址都会响应。
+                    }
+                });
+            }
+            pool.shutdown();
+            pool.awaitTermination(8, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            pool.shutdownNow();
+        }
+        return found;
+    }
+}
