@@ -4,6 +4,7 @@ import android.util.Base64;
 
 import com.github.carwithinforandroid.core.VideoFrame;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
@@ -91,8 +92,12 @@ public final class ZeehoConnection {
             socket.bind(new InetSocketAddress(localIp, 0));
             socket.connect(new InetSocketAddress(targetIp, DISCOVERY_PORT), 2000);
             JSONObject body = new JSONObject();
-            body.put("phoneType", "Android");
-            body.put("packageName", packageName);
+            try {
+                body.put("phoneType", "Android");
+                body.put("packageName", packageName);
+            } catch (JSONException e) {
+                throw new IOException("构造投屏请求失败", e);
+            }
             OutputStream out = socket.getOutputStream();
             out.write(ZeehoProtocol.control(CMD_ANNOUNCE, 0, body.toString().getBytes(StandardCharsets.UTF_8)));
             out.flush();
@@ -100,7 +105,12 @@ public final class ZeehoConnection {
             if (reply.command != CMD_ANNOUNCE_ACK) {
                 throw new IOException(String.format("投屏请求被拒 cmd=0x%x", reply.command));
             }
-            JSONObject object = new JSONObject(new String(reply.payload, StandardCharsets.UTF_8));
+            JSONObject object;
+            try {
+                object = new JSONObject(new String(reply.payload, StandardCharsets.UTF_8));
+            } catch (JSONException e) {
+                throw new IOException("解析投屏应答失败", e);
+            }
             if (!object.optBoolean("status")) {
                 throw new IOException("仪表未接受投屏请求");
             }
@@ -258,7 +268,14 @@ public final class ZeehoConnection {
     /** 仪表逐帧拉取；没有拉帧请求时丢弃当前帧。 */
     public void sendFrame(VideoFrame frame) throws IOException {
         if (!mediaReady || videoSocket == null) return;
-        if (frameRequests.poll(100, TimeUnit.MILLISECONDS) == null) return;
+        boolean requested;
+        try {
+            requested = frameRequests.poll(100, TimeUnit.MILLISECONDS) != null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("等待仪表拉帧被中断", e);
+        }
+        if (!requested) return;
         byte[] packet = ZeehoProtocol.h264(frame.accessUnit, !sentPrefix);
         write(videoSocket, packet);
         sentPrefix = true;
