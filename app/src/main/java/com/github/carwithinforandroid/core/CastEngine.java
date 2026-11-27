@@ -25,6 +25,12 @@ public final class CastEngine implements PhoneVideoSource.Callback {
     /** 仪表输出是否真的建立了会话；false 表示只采集不推流。 */
     private volatile boolean outputReady;
     private volatile boolean outputFailureLogged;
+    /** 采集源致命失败时的回调：由会话层收尾，避免界面卡在「无法重试」状态。 */
+    private volatile Runnable fatalHandler;
+
+    public void setFatalHandler(Runnable handler) {
+        this.fatalHandler = handler;
+    }
 
     public void setFrameTap(FrameTap tap) {
         this.tap = tap;
@@ -134,7 +140,16 @@ public final class CastEngine implements PhoneVideoSource.Callback {
 
     @Override
     public void onError(Throwable error) {
-        state.set("ERROR: " + error.getMessage());
-        LogBus.log("引擎错误：" + error.getMessage());
+        String msg = error.getMessage() == null ? error.toString() : error.getMessage();
+        state.set("ERROR: " + msg);
+        LogBus.log("引擎错误：" + msg);
+        Runnable handler = fatalHandler;
+        if (handler != null) {
+            try {
+                handler.run();
+            } catch (Throwable ignored) {
+                // 收尾失败不应再抛
+            }
+        }
     }
 }

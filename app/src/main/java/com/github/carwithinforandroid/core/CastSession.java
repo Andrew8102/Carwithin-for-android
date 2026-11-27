@@ -92,6 +92,9 @@ public final class CastSession {
 
     private void begin(Context context, String sourceLabel) {
         engine.attach(currentSource, output);
+        // 采集源自己失败（典型：CarLife 等端口 30s 超时）时自动收尾，
+        // 否则 active 一直为 true，按钮全部禁用，用户只能干看着没法重试。
+        engine.setFatalHandler(this::finishOnFailure);
         active.set(true);
         FrameStats.get().reset();
         LogBus.log("开始投屏协商（" + sourceLabel + " → " + profile.shortLabel() + "）");
@@ -121,6 +124,23 @@ public final class CastSession {
         currentSource = null;
         LogBus.log("投屏已停止");
         notifyChanged();
+    }
+
+    /**
+     * 采集源致命失败后的收尾：在独立线程里做，避免在采集线程内部 join 自己。
+     * 结束后 active 归 false，界面按钮恢复可用，用户可直接重试。
+     */
+    private void finishOnFailure() {
+        Thread t = new Thread(() -> {
+            if (!active.compareAndSet(true, false)) return;
+            engine.stop();
+            worker = null;
+            currentSource = null;
+            LogBus.log("会话已结束（采集源失败）：可以直接重新点击，或改用「录屏投屏」");
+            notifyChanged();
+        }, "cast-fail-cleanup");
+        t.setDaemon(true);
+        t.start();
     }
 
     public boolean isActive() {

@@ -110,6 +110,9 @@ public class MainActivity extends Activity {
         CrashGuard.install(this);
         CrashGuard.restoreLastCrash(this);
         session.configure(this);
+        // 每份日志首行带版本，避免"改了却没生效 / 装的是旧包"这类排查盲区。
+        LogBus.log("CarWithin " + appVersion() + " · Android " + Build.VERSION.SDK_INT
+                + " · " + Build.MODEL);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(Color.parseColor(BG));
@@ -249,7 +252,13 @@ public class MainActivity extends Activity {
         String pkg = packageInput.getText().toString().trim();
         String activity = activityInput.getText().toString().trim();
         VehicleProfile.setLaunchPackage(this, pkg);
-        launchResult.setText(CarAppLauncher.launch(this, pkg, activity));
+        launchResult.setText("正在枚举入口并尝试拉起…\n（会依次试指定组件 → 疑似入口 → 全部组件）");
+        // 枚举全部 Activity 可能要试几十个组件，放主线程会卡界面，必须丢后台。
+        final Context app = getApplicationContext();
+        new Thread(() -> {
+            String text = CarAppLauncher.launch(app, pkg, activity);
+            runOnUiThread(() -> launchResult.setText(text));
+        }, "launch-ui").start();
     }
 
     private void doDiagnose() {
@@ -341,6 +350,16 @@ public class MainActivity extends Activity {
      * 早就关了，只能等到超时。
      */
     private void startCarlifeWithLaunch() {
+        if (session.isActive()) {
+            // 之前这里直接 return，界面上什么反应都没有，用户会以为按钮坏了。
+            String phase = session.sourcePhase();
+            LogBus.log("已有会话在进行中（" + phase + "），忽略重复点击");
+            launchResult.setText("已经在等待/投屏中，不必重复点。\n"
+                    + "当前阶段：" + (phase.isEmpty() ? session.status() : phase) + "\n"
+                    + "要重来一遍请先点「停止投屏」。");
+            Toast.makeText(this, "已在等待/投屏中，先「停止投屏」再重试", Toast.LENGTH_SHORT).show();
+            return;
+        }
         String pkg = packageInput.getText().toString().trim();
         if (pkg.isEmpty()) {
             pkg = VehicleProfile.launchPackage(this);
@@ -353,42 +372,48 @@ public class MainActivity extends Activity {
         final String pkgFinal = pkg;
         final String actFinal = activityInput.getText().toString().trim();
 
-        if (session.isActive()) session.stop();
-        LogBus.log("一键流程：先在后台等 Car+ 的 7 个端口，再拉起 Car+");
-        launchResult.setText("已在后台等待 Car+ 端口，稍后自动拉起 Car+…\n"
-                + "若弹出 Car+ 界面，请停留在 Car+ 里不要退回桌面。");
+        LogBus.log("一键流程：先在后台等 Car+ 的 7 个端口（最长 30s），再拉起 Car+");
+        launchResult.setText("已在后台等待 Car+ 端口，约 0.3 秒后自动拉起 Car+…\n"
+                + "弹出 Car+ 后请停留其中别退回桌面。\n"
+                + "看下方「运行日志」是否出现「七个通道全部连通」。");
+        Toast.makeText(this, "后台已开始等端口，马上拉起 Car+", Toast.LENGTH_SHORT).show();
+
         session.startCarLife(this, null);
 
         handler.postDelayed(() -> {
             if (!session.isActive()) return;
-            launchCarPlus(pkgFinal, actFinal, "第 1 次");
+            launchCarPlus(pkgFinal, actFinal, "第 1 次", 0);
         }, 300);
-        // 之后只在「还在等端口」时补拉，避免把已经握上手的会话打断
-        handler.postDelayed(() -> retryLaunchCarPlus(pkgFinal, actFinal, "第 2 次"), 4500);
-        handler.postDelayed(() -> retryLaunchCarPlus(pkgFinal, actFinal, "第 3 次"), 9000);
+        // 之后只在「还在等端口」时补拉，且每次换一个疑似入口，避免把已握手的会话打断
+        handler.postDelayed(() -> retryLaunchCarPlus(pkgFinal, actFinal, "第 2 次", 1), 4500);
+        handler.postDelayed(() -> retryLaunchCarPlus(pkgFinal, actFinal, "第 3 次", 2), 9000);
     }
 
-    private void retryLaunchCarPlus(String pkg, String act, String round) {
+    private void retryLaunchCarPlus(String pkg, String act, String round, int index) {
         if (!session.isActive()) return;
         // 已经连上或已出画就别再拉，免得把进行中的握手打断
         String phase = session.sourcePhase();
         if (phase.contains("连通") || phase.contains("画布") || previewFrames > 0) return;
-        launchCarPlus(pkg, act, round);
+        launchCarPlus(pkg, act, round, index);
     }
 
     /** 在后台解析入口并拉起 Car+，避免主线程做 PackageManager 查询。 */
-    private void launchCarPlus(String pkg, String act, String round) {
+    private void launchCarPlus(String pkg, String act, String round, int index) {
         new Thread(() -> {
-            String target = act;
-            if (target == null || target.isEmpty()) {
-                target = CarAppLauncher.bestCandidate(this, pkg);
-            }
+            // 每次补拉换一个疑似入口，重复拉同一个类名没有意义
+            String target = (index == 0 && act != null && !act.isEmpty()) ? act : null;
+            if (target == null) target = CarAppLauncher.candidateAt(this, pkg, index);
+            if (target == null) target = CarAppLauncher.bestCandidate(this, pkg);
             if (target == null) {
-                LogBus.log(round + "没找到疑似 CarLife 入口（" + pkg + "），点「枚举组件」看全量类名");
+                LogBus.log(round + "：枚举不到疑似入口，改为全量尝试拉起 " + pkg);
+                CarAppLauncher.launch(this, pkg, null);
                 return;
             }
             LogBus.log(round + "拉起 " + pkg + " / " + target);
-            CarAppLauncher.launch(this, pkg, target);
+            String err = CarAppLauncher.launchExact(this, pkg, target);
+            if (err != null) {
+                LogBus.log(round + "失败（" + target + "）：" + err + "，继续用其它入口试");
+            }
         }, "carplus-launch").start();
     }
 
@@ -453,13 +478,9 @@ public class MainActivity extends Activity {
         }));
         card.addView(startButton);
 
-        carlifeButton = button("CarLife 直连（收 Car+ 的 H.264，零转码）", "#14B8A6");
-        carlifeButton.setOnClickListener(safe("CarLife 投屏", () -> {
-            if (VehicleProfile.autoLaunch(this)) {
-                doLaunch();
-            }
-            session.startCarLife(this, null);
-        }));
+        carlifeButton = button("CarLife 直连（自动拉起 Car+ 并抢端口）", "#14B8A6");
+        // 走一键流程，而不是「先 doLaunch 再直连」：顺序反了就必然错过 Car+ 的端口窗口。
+        carlifeButton.setOnClickListener(safe("CarLife 投屏", this::startCarlifeWithLaunch));
         card.addView(carlifeButton);
 
         // 关键按钮：先让 CarLifeLink 在 7 个端口上等，再去拉起 Car+。
@@ -482,7 +503,8 @@ public class MainActivity extends Activity {
         hint.setText("排查顺序（每步都看下方「运行日志」和「本地预览」）：\n"
                 + "① 点「用测试图验证出画」——不需要仪表也不需要 Car+，本地预览应出现彩条。\n"
                 + "    出彩条 = 编码/解码/预览这条链路没问题；不出 = 问题在这一段，先别管车机。\n"
-                + "② 点「一键：拉起 Car+ 并直连」——先等端口再拉起 Car+，抢那 1~2 秒的窗口。\n"
+                + "② 点任意一个 CarLife 按钮（两个都是「先等端口再拉起 Car+」）。\n"
+                + "    日志出现「七个通道全部连通」才算抢到窗口；一直「第 N 次…」就是没抢到。\n"
                 + "③ 预览出画面后再去管极核：连上仪表 Wi-Fi 重试，日志会显示仪表输出是否就绪。");
         hint.setTextSize(11f);
         hint.setTextColor(Color.parseColor(MUTED));

@@ -128,7 +128,12 @@ public final class CarAppLauncher {
                 }
             }
             Intent launch = pm.getLaunchIntentForPackage(pkg);
-            sb.append(launch != null ? "✓ 有系统启动入口\n" : "✗ 无系统启动入口\n");
+            sb.append(launch != null ? "✓ 有系统启动入口\n" : "✗ 无系统启动入口（正常，Car+ 是系统组件）\n");
+
+            String best = bestCandidate(context, pkg);
+            sb.append(best != null
+                    ? "✓ 最佳候选入口：" + best + "\n"
+                    : "✗ 枚举不到疑似 CarLife 入口，点「枚举组件」看全量类名\n");
         }
 
         sb.append("\nCarLife 端口状态（127.0.0.1）：\n");
@@ -181,47 +186,120 @@ public final class CarAppLauncher {
         if (packageName == null || packageName.trim().isEmpty()) {
             return "包名为空，请填写车机互联 App 的包名";
         }
-        packageName = packageName.trim();
+        final String pkg = packageName.trim();
         PackageManager pm = context.getPackageManager();
-        Intent chosen = null;
-        String path = "";
 
-        if (activity != null && !activity.trim().isEmpty()) {
-            Intent explicit = new Intent();
-            explicit.setComponent(new ComponentName(packageName, activity.trim()));
-            explicit.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            if (pm.resolveActivity(explicit, 0) != null) {
-                chosen = explicit;
-                path = "组件 " + activity.trim();
-            }
+        // 关键：这里绝不能用 resolveActivity 当门禁。
+        // Car+ 的 CarLife 入口多为 android:exported="false"，resolveActivity 对未导出组件
+        // 一律返回 null，但显式 startActivity 常常仍能拉起（厂商系统 App 有特权）。
+        // 之前那句「未找到可拉起的界面」就是被 resolveActivity 误判出来的：
+        // 明明「尝试进 CarLife」用同一个类名能拉起并点亮 7 个端口。
+        List<Intent> attempts = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        List<ActivityEntry> all = activities(context, pkg);
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+
+        String typed = activity == null ? "" : activity.trim();
+        if (!typed.isEmpty() && seen.add(typed)) {
+            attempts.add(explicit(pkg, typed));
+            labels.add("指定组件 " + typed);
         }
-        if (chosen == null) {
-            Intent launch = pm.getLaunchIntentForPackage(packageName);
-            if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                chosen = launch;
-                path = "系统启动入口";
-            }
+        String best = bestCandidate(context, pkg);
+        if (best != null && seen.add(best)) {
+            attempts.add(explicit(pkg, best));
+            labels.add("疑似入口 " + best);
         }
-        if (chosen == null) {
-            String msg = "未找到可拉起的界面：" + packageName
-                    + "。请确认已安装，或到系统设置开启互联。\n可点「诊断」查看详细原因。";
+        // 兜底：把枚举到的组件全试一遍（activities 已把疑似 CarLife 的排在前面）。
+        // 前面几个都失败时才会走到这里，此时多试几个比直接放弃有用。
+        for (ActivityEntry e : all) {
+            if (!e.enabled || !seen.add(e.name)) continue;
+            attempts.add(explicit(pkg, e.name));
+            labels.add((e.likelyCarLife ? "疑似 " : "枚举 ") + e.name);
+        }
+        Intent systemEntry = pm.getLaunchIntentForPackage(pkg);
+        if (systemEntry != null) {
+            systemEntry.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            attempts.add(systemEntry);
+            labels.add("系统启动入口");
+        }
+
+        if (attempts.isEmpty()) {
+            String msg = "查不到 " + pkg + " 的任何可拉起界面。\n"
+                    + "该包可能未安装，或本机不是 ColorOS（Car+ 是 OPPO 系统组件）。\n"
+                    + "点「诊断」看安装状态与最佳候选入口。";
             LogBus.log(msg);
             return msg;
+        }
+
+        StringBuilder failed = new StringBuilder();
+        for (int i = 0; i < attempts.size(); i++) {
+            String label = labels.get(i);
+            try {
+                context.startActivity(attempts.get(i));
+                LogBus.log("已拉起 " + pkg + "（" + label + "）");
+                String extra = label.startsWith("枚举 ")
+                        ? "\n注意：这是非疑似入口，可能只是 Car+ 的普通页面，不代表进入 CarLife 模式。"
+                        : "";
+                return "已拉起 " + pkg + "（" + label + "）。" + extra + "\n"
+                        + "请停留在 Car+ 界面别退回桌面——7 个端口只在 Car+ 前台时开。\n"
+                        + "点「诊断」可确认端口状态。";
+            } catch (Throwable t) {
+                String why = t.getClass().getSimpleName()
+                        + (t.getMessage() == null ? "" : ": " + t.getMessage());
+                failed.append("· ").append(label).append(" → ").append(why).append('\n');
+                LogBus.log("拉起失败（" + label + "）：" + why);
+            }
+        }
+        String msg = "所有入口都拉不起来（共试 " + attempts.size() + " 个）：\n" + failed
+                + "\n可能原因：该 ColorOS 版本不允许外部 App 拉起 Car+（需要系统互联权限）。\n"
+                + "请改用「录屏投屏」——它不依赖 Car+，只要画面能在手机显示就能投。";
+        LogBus.log(msg);
+        return msg;
+    }
+
+    /**
+     * 按「疑似优先」顺序取第 {@code index} 个可导出且启用的疑似入口，越界返回 null。
+     *
+     * <p>一键流程补拉时用它换一个入口再试——重复拉同一个类名没有意义。
+     * 这里<b>不做端口探测</b>：CarLifeLink 已经在等端口，额外的探测连接可能占掉
+     * Car+ 的单连接监听位，反而把自己挤掉。
+     */
+    public static String candidateAt(Context context, String packageName, int index) {
+        if (index < 0) return null;
+        int n = 0;
+        for (ActivityEntry e : activities(context, packageName)) {
+            if (!e.likelyCarLife || !e.exported || !e.enabled) continue;
+            if (n++ == index) return e.name;
+        }
+        return null;
+    }
+
+    /**
+     * 只尝试指定组件，不回落枚举。一键流程补拉用它，避免弹出 Car+ 的一堆无关页面。
+     *
+     * @return null 表示拉起成功，否则为失败原因
+     */
+    public static String launchExact(Context context, String packageName, String activity) {
+        if (packageName == null || activity == null || activity.trim().isEmpty()) {
+            return "组件名为空";
         }
         try {
-            context.startActivity(chosen);
-            String msg = "已拉起 " + packageName + "（" + path + "）。\n"
-                    + "拉起界面不等于进入 CarLife 模式；点「诊断」看 7 个端口，"
-                    + "或用「尝试进 CarLife」自动逐个入口试探。";
-            LogBus.log("已拉起 " + packageName + "（" + path + "）");
-            return msg;
-        } catch (Exception e) {
-            String msg = "拉起失败：" + e.getMessage()
-                    + "。\n部分系统不允许外部拉起车机 App，可手动打开后点「诊断」。";
-            LogBus.log(msg);
-            return msg;
+            context.startActivity(explicit(packageName.trim(), activity.trim()));
+            LogBus.log("已拉起 " + packageName.trim() + "（" + activity.trim() + "）");
+            return null;
+        } catch (Throwable t) {
+            String why = t.getClass().getSimpleName()
+                    + (t.getMessage() == null ? "" : ": " + t.getMessage());
+            LogBus.log("拉起失败（" + activity.trim() + "）：" + why);
+            return why;
         }
+    }
+
+    private static Intent explicit(String pkg, String activity) {
+        Intent intent = new Intent();
+        intent.setComponent(new ComponentName(pkg, activity));
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        return intent;
     }
 
     /** 打开系统设置中的应用管理，方便用户查看已安装车机 App 的包名。 */
