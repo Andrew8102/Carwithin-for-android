@@ -26,28 +26,32 @@ ICCOA CarLink 是覆盖小米 CarWith、OPPO Car+ 车联、vivo Jovi InCar 的�
 
 在没有 SDK 前，阶段一尝试用 CarLife 栈接通 OPPO Car+；这条链路不需要专有 SDK，但受下节限制。
 
-## 阶段一现状：CarLife 协议栈已实现，仅差「拉起 Car+」（v0.4.0）
+## 阶段一现状：CarLife 协议栈代码已移植，全部未验证（v0.4.0）
+
+> ⚠️ 本节描述的是**代码实现与设计推断**，不是实测结果。CarLife 链路（含本地预览）至今没有任何一次出画记录。
 
 协议栈本身不依赖 ICCOA SDK：
 
-- `sources/carlife/CarLifeLink.java`：自 CarNine 完整移植，七端口连接 + 版本协商 + MD5 身份证明 + RSA/AES 内容加密 + 视频帧接收，仅依赖 JDK。
+- `sources/carlife/CarLifeLink.java`：自 CarNine 移植，七端口连接 + 版本协商 + MD5 身份证明 + RSA/AES 内容加密 + 视频帧接收，仅依赖 JDK。
 - `sources/carlife/H264.java`：Annex-B / AVCC 转换与关键帧识别。
 - `sources/carlife/CarLifePhoneSource.java`：把 CarLifeLink 包装成 `PhoneVideoSource`，接入 CastEngine。
-- `media/H264Decoder.java` + `ui/PreviewView.java`：本地解码出画，不依赖极核在线。
+- `media/H264Decoder.java` + `ui/PreviewView.java`：本地解码出画的尝试，设计上不依赖极核在线，**尚未观察到出画**。
 - UI「①」新增「诊断」「枚举组件」「尝试进 CarLife」；「②」CarLife 直连可配本地预览。
 
-### 角色澄清：HU 由本 App 扮演，不需要真车机
+### 待验证的设计推断：HU 可能由本 App 扮演，不需要真车机
 
 CarLife 的角色是固定的：**MD（手机端）= Car+ 内的百度 CarLife+ 组件，负责编码并在本机
 `127.0.0.1` 上监听 7 个端口；HU（车机端）= 主动连接这些端口的一方**。
 
-关键点是 **HU 可以就住在同一台手机里**。CarNine 正是这么做的：它在手机上冒充 HU 连本机回环，
+若这一条成立，则 **HU 可以就住在同一台手机里**。CarNine 正是这么做的：它在手机上冒充 HU 连本机回环，
 把收到的 H.264 再按九号 UDP 协议推给仪表——**九号仪表只参与输出侧，不参与 CarLife 握手**。
-此前本文档把九号仪表写成「承担 CarLife 车机角色」是错的。
+此前本文档把九号仪表写成「承担 CarLife 车机角色」是错的，现已更正为推断。
 
-所以本项目的极核仪表是否为 CarLife 车机，与这条链路无关。真正的唯一变量是：
+所以本项目的极核仪表是否为 CarLife 车机，与这条链路应该无关。唯一变量是：
 
 > 能不能让 Car+ 交出镜像 Surface，让 7 个端口在本机开始监听。
+
+**但这仍是推断**：本项目尚未在任何机器上确认过 7 个端口会开。
 
 ### 唯一变量：如何拉起 Car+
 
@@ -61,16 +65,17 @@ Car+ 通过 AIDL `ICarLifeCastManager` 把「镜像 Surface + 宽高 + DPI」交
    每次等 2.5 秒轮询 7 个端口，一旦 7/7 全绿立刻停止并提示可用。
 3. **诊断**：单次快照，确认当前端口与已安装信息。
 
-三种可能的结果与对策：
+三种可能的结果与对策（**尚未实测，属于预期**）：
 
 | 结果 | 含义 | 下一步 |
 | --- | --- | --- |
-| 7/7 端口监听 | Car+ 已进入 CarLife 模式 | 点「CarLife 直连」，看本地预览出画 |
+| 7/7 端口监听 | Car+ 可能已进入 CarLife 模式 | 点「CarLife 直连」，看本地预览能否出画 |
 | 部分端口 | CarLife 正在启动或半途失败 | 再点一次诊断/尝试，或看日志里的握手步骤 |
 | 0/7 端口 | 候选入口都不是有效入口 | 用全量枚举列表手动填 Activity 再试；仍不行则说明该系统把入口锁在系统互联流程里 |
 
-**结论**：CarLife 直连已从「大概率不可用」修正为「有明确可操作的调试路径」。若枚举+尝试全部未命中，
-说明该 ColorOS 版本不开放外部拉起，此时用不依赖 Car+ 的**录屏投屏**。ICCOA 直连仍是长期方向，
+**结论**：CarLife 直连的结论从「大概率不可用」修正为「**有可操作的调试路径**」。注意这里提供的是
+调试手段，不是可用功能——枚举+尝试是否真能让端口变绿，还没有任何实测记录。
+若全部未命中，可退到不依赖 Car+ 的**录屏投屏**（同样未验证）。ICCOA 直连仍是长期方向，
 待合法 SDK 可用时启用 `IccoaPhoneSource` 槽位。
 
 ## 华为 HiCar
