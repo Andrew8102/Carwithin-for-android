@@ -3,6 +3,8 @@ package com.github.carwithinforandroid.sources.screen;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
+import android.hardware.display.VirtualDisplay;
+import android.hardware.display.VirtualDisplayCallback;
 import android.media.projection.MediaProjection;
 import android.view.Surface;
 
@@ -27,9 +29,9 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
     private static final int DENSITY = 160;
 
     private MediaProjection projection;
-    private MediaProjection.VirtualDisplayCallback displayCallback;
+    private VirtualDisplayCallback displayCallback;
     private MediaCodec codec;
-    private android.hardware.display.VirtualDisplay virtualDisplay;
+    private VirtualDisplay virtualDisplay;
     private Thread encoderThread;
     private volatile boolean running;
     private Callback callback;
@@ -56,7 +58,7 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
             Surface surface = codec.createInputSurface();
             codec.start();
 
-            displayCallback = new MediaProjection.VirtualDisplayCallback() {
+            displayCallback = new VirtualDisplayCallback() {
                 @Override
                 public void onStopped() {
                     LogBus.log("系统停止了录屏虚拟显示");
