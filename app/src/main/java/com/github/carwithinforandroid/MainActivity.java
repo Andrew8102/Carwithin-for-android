@@ -1209,10 +1209,18 @@ public class MainActivity extends Activity {
         edit.setHint(hint);
         edit.setText(value);
         edit.setTextColor(Color.parseColor(TEXT));
-        edit.setHintTextColor(Color.parseColor(BORDER));
+        // 反白看不清的根因：AppTheme 是浅色 Theme.Material，系统默认 edit_text 背景也是浅色，
+        // 配上深色字/浅色字都糊。这里显式给输入框套深色底 + 亮边，和卡片配色一致。
+        // hint 原来用 BORDER(#334155)，在 #1E293B 底上几乎看不见，提到 MUTED(#94A3B8)。
+        edit.setHintTextColor(Color.parseColor(MUTED));
         edit.setTextSize(13f);
         edit.setSingleLine(true);
-        edit.setBackgroundResource(android.R.drawable.edit_text);
+        GradientDrawable box = new GradientDrawable();
+        box.setColor(Color.parseColor("#0F172A"));
+        box.setStroke(1, Color.parseColor(BORDER));
+        box.setCornerRadius(dp(8));
+        edit.setBackground(box);
+        edit.setPadding(dp(10), dp(8), dp(10), dp(8));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.topMargin = dp(8);
