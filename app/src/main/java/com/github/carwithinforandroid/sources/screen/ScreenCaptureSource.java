@@ -7,6 +7,7 @@ import android.hardware.display.VirtualDisplay;
 import android.media.projection.MediaProjection;
 import android.view.Surface;
 
+import com.github.carwithinforandroid.core.FrameStats;
 import com.github.carwithinforandroid.core.LogBus;
 import com.github.carwithinforandroid.core.PhoneVideoSource;
 import com.github.carwithinforandroid.core.VideoFrame;
@@ -21,11 +22,12 @@ import java.nio.ByteBuffer;
 public final class ScreenCaptureSource implements PhoneVideoSource {
 
     private static final String TAG = "ScreenCapture";
-    private static final int WIDTH = 1024;
-    private static final int HEIGHT = 480;
-    private static final int FPS = 25;
-    private static final int BITRATE = 2_500_000;
     private static final int DENSITY = 160;
+
+    private int width = 1024;
+    private int height = 480;
+    private int fps = 25;
+    private int bitrate = 2_500_000;
 
     private MediaProjection projection;
     private VirtualDisplay.Callback displayCallback;
@@ -40,15 +42,23 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
         this.projection = projection;
     }
 
+    /** 应用车型配置：分辨率、帧率、码率。 */
+    public void configure(int width, int height, int fps, int bitrateKbps) {
+        this.width = width;
+        this.height = height;
+        this.fps = fps > 0 ? fps : 25;
+        this.bitrate = bitrateKbps > 0 ? bitrateKbps * 1000 : 2_500_000;
+    }
+
     @Override
     public void start(android.content.Context context, Callback callback) {
         if (projection == null) throw new IllegalStateException("尚未获得录屏授权");
         this.callback = callback;
 
-        MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, WIDTH, HEIGHT);
+        MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-        format.setInteger(MediaFormat.KEY_BIT_RATE, BITRATE);
-        format.setInteger(MediaFormat.KEY_FRAME_RATE, FPS);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, fps);
         format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
 
         try {
@@ -64,7 +74,7 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
                 }
             };
             virtualDisplay = projection.createVirtualDisplay(
-                    "CarWithinCast", WIDTH, HEIGHT, DENSITY,
+                    "CarWithinCast", width, height, DENSITY,
                     android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     surface, displayCallback, null);
 
@@ -72,7 +82,7 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
             encoderThread = new Thread(this::encodeLoop, "h264-encoder");
             encoderThread.start();
             callback.onState("SCREEN_CAPTURE_RUNNING");
-            LogBus.log("屏幕采集已启动 " + WIDTH + "×" + HEIGHT + "@" + FPS + " " + (BITRATE / 1000) + "kbps");
+            LogBus.log("屏幕采集已启动 " + width + "×" + height + "@" + fps + " " + (bitrate / 1000) + "kbps");
         } catch (Exception e) {
             releaseCodec();
             callback.onError(e);
@@ -118,6 +128,7 @@ public final class ScreenCaptureSource implements PhoneVideoSource {
             }
             byte[] accessUnit = buildAccessUnit(data);
             if (accessUnit == null) continue;
+            FrameStats.get().onEncoded(accessUnit.length);
             boolean keyframe = (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0;
             if (callback != null) callback.onFrame(new VideoFrame(accessUnit, System.currentTimeMillis(), keyframe));
         }

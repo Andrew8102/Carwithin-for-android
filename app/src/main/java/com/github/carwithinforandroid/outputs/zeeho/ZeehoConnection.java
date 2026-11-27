@@ -36,7 +36,7 @@ public final class ZeehoConnection {
     public static final int CONTROL_PORT = 10922;
     public static final int AUX_PORT = 10711;
     public static final int VIDEO_PORT = 10710;
-    public static final int DISCOVERY_PORT = 10930;
+    public static final int DEFAULT_DISCOVERY_PORT = 10930;
 
     private static final int CMD_ANNOUNCE = 0x70000010;
     private static final int CMD_ANNOUNCE_ACK = 0x70000011;
@@ -52,9 +52,9 @@ public final class ZeehoConnection {
     private static final int AUX_MEDIA_START_ACK = 0x71;
     private static final int AUX_PULL_FRAME = 0x72;
 
-    private static final int WIDTH = 1024;
-    private static final int HEIGHT = 480;
-    private static final int FPS = 25;
+    private final int width;
+    private final int height;
+    private final int discoveryPort;
 
     private final String localIp;
     private String targetIp;
@@ -83,6 +83,13 @@ public final class ZeehoConnection {
 
     public ZeehoConnection(String localIp, String targetIp, ZeehoIdentity identity,
                            String packageName, int versionCode, String phoneModel, String osVersion) {
+        this(localIp, targetIp, identity, packageName, versionCode, phoneModel, osVersion,
+                1024, 480, DEFAULT_DISCOVERY_PORT);
+    }
+
+    public ZeehoConnection(String localIp, String targetIp, ZeehoIdentity identity,
+                           String packageName, int versionCode, String phoneModel, String osVersion,
+                           int width, int height, int discoveryPort) {
         this.localIp = localIp;
         this.targetIp = targetIp;
         this.identity = identity;
@@ -90,11 +97,14 @@ public final class ZeehoConnection {
         this.versionCode = versionCode;
         this.phoneModel = phoneModel;
         this.osVersion = osVersion;
+        this.width = width;
+        this.height = height;
+        this.discoveryPort = discoveryPort > 0 ? discoveryPort : DEFAULT_DISCOVERY_PORT;
     }
 
     public void start() throws IOException, GeneralSecurityException {
         if (targetIp == null || targetIp.isEmpty()) {
-            List<String> found = ZeehoDiscovery.discover(localIp, DISCOVERY_PORT);
+            List<String> found = ZeehoDiscovery.discover(localIp, discoveryPort);
             if (found.isEmpty()) {
                 throw new IOException("未发现仪表：请连接仪表 Wi-Fi 并在仪表上开启投屏");
             }
@@ -131,7 +141,7 @@ public final class ZeehoConnection {
     private void announce() throws IOException {
         try (Socket socket = new Socket()) {
             socket.bind(new InetSocketAddress(localIp, 0));
-            socket.connect(new InetSocketAddress(targetIp, DISCOVERY_PORT), 3000);
+            socket.connect(new InetSocketAddress(targetIp, discoveryPort), 3000);
             JSONObject body = new JSONObject();
             try {
                 body.put("phoneType", "Android");
@@ -313,8 +323,8 @@ public final class ZeehoConnection {
         JSONObject object = new JSONObject();
         try {
             object.put("displayRotation", 0);
-            object.put("width", mode == 2 ? HEIGHT : WIDTH);
-            object.put("height", mode == 2 ? WIDTH : HEIGHT);
+            object.put("width", mode == 2 ? height : width);
+            object.put("height", mode == 2 ? width : height);
             object.put("enableAccessibility", false);
             object.put("enableAOAHid", false);
             object.put("mode", mode);
@@ -397,10 +407,11 @@ public final class ZeehoConnection {
 
     private byte[] mediaConfigReply(ZeehoProtocol.Auxiliary request) throws IOException {
         if (request.payload.length < 32) throw new IOException("媒体配置载荷不足 32 字节");
-        int width = ZeehoProtocol.u16(request.payload, 0);
-        int height = ZeehoProtocol.u16(request.payload, 2);
-        if (width != WIDTH || (height != HEIGHT && height != 488)) {
-            throw new IOException(String.format("仪表媒体尺寸异常 %dx%d", width, height));
+        int reportedWidth = ZeehoProtocol.u16(request.payload, 0);
+        int reportedHeight = ZeehoProtocol.u16(request.payload, 2);
+        if (reportedWidth != this.width || reportedHeight != this.height) {
+            LogBus.log(String.format("警告：仪表报告 %dx%d 与配置 %dx%d 不一致，按配置继续",
+                    reportedWidth, reportedHeight, this.width, this.height));
         }
         byte[] echoed = Base64.decode(request.payload, 32, request.payload.length - 32, Base64.DEFAULT);
         if (signedHuid == null || !Arrays.equals(echoed, signedHuid)) {
@@ -414,9 +425,9 @@ public final class ZeehoConnection {
             throw new IOException("媒体身份签名校验失败", e);
         }
         configured = true;
-        LogBus.log("媒体身份回显校验通过，仪表报告 " + width + "×" + height);
+        LogBus.log("媒体身份回显校验通过，仪表报告 " + reportedWidth + "×" + reportedHeight);
         return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
-                .putInt(2).putShort((short) WIDTH).putShort((short) HEIGHT).array();
+                .putInt(2).putShort((short) this.width).putShort((short) this.height).array();
     }
 
     /* ---------------- 视频通道 10710 ---------------- */

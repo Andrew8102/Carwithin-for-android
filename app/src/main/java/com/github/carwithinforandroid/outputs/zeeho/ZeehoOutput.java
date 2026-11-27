@@ -7,20 +7,29 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 
 import com.github.carwithinforandroid.core.DashboardOutput;
+import com.github.carwithinforandroid.core.FrameStats;
+import com.github.carwithinforandroid.core.VehicleProfile;
 import com.github.carwithinforandroid.core.VideoFrame;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
 
-/** 极核 AE4 MAX2+ 6.2 寸输出实现。 */
+/** 极核 PXC/TCP 输出实现。支持车型配置覆盖分辨率、发现端口与目标 IP。 */
 public final class ZeehoOutput implements DashboardOutput {
 
     private ZeehoConnection connection;
+    private VehicleProfile profile;
+
+    /** 应用车型配置，必须在 start 之前调用。 */
+    public void configure(VehicleProfile profile) {
+        this.profile = profile;
+    }
 
     @Override
     public void start(Context context, int width, int height, int fps) throws IOException {
-        if (width != 1024 || height != 480) {
-            throw new IllegalArgumentException("极核 6.2 寸固定 1024x480");
+        if (profile != null) {
+            width = profile.width;
+            height = profile.height;
         }
         ZeehoIdentity identity;
         try {
@@ -30,9 +39,14 @@ public final class ZeehoOutput implements DashboardOutput {
         }
         String localIp = localIp(context);
         if (localIp == null) throw new IOException("未取得 Wi-Fi 地址，请先连接仪表 Wi-Fi");
-        connection = new ZeehoConnection(localIp, null, identity,
+        String targetIp = VehicleProfile.targetIp(context);
+        if (targetIp != null && targetIp.trim().isEmpty()) targetIp = null;
+
+        int discoveryPort = profile == null ? ZeehoConnection.DEFAULT_DISCOVERY_PORT : profile.discoveryPort;
+        connection = new ZeehoConnection(localIp, targetIp, identity,
                 context.getPackageName(), versionCode(context),
-                Build.MODEL, String.valueOf(Build.VERSION.SDK_INT));
+                Build.MODEL, String.valueOf(Build.VERSION.SDK_INT),
+                width, height, discoveryPort);
         try {
             connection.start();
         } catch (GeneralSecurityException e) {
@@ -42,7 +56,10 @@ public final class ZeehoOutput implements DashboardOutput {
 
     @Override
     public void onFrame(VideoFrame frame) throws IOException {
-        if (connection != null) connection.sendFrame(frame);
+        if (connection != null) {
+            connection.sendFrame(frame);
+            FrameStats.get().onSent();
+        }
     }
 
     @Override

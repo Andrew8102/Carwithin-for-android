@@ -5,19 +5,23 @@ import android.media.projection.MediaProjection;
 
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoOutput;
 import com.github.carwithinforandroid.sources.screen.ScreenCaptureSource;
+import com.github.carwithinforandroid.sources.screen.TestPatternSource;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** 单例投屏会话：串联屏幕采集、极核输出与界面状态。 */
+/** 单例投屏会话：按车型配置串联采集源（录屏或测试图）、极核输出与界面状态。 */
 public final class CastSession {
 
     private static final CastSession INSTANCE = new CastSession();
 
     private final CastEngine engine = new CastEngine();
-    private final ScreenCaptureSource source = new ScreenCaptureSource();
+    private final ScreenCaptureSource screenSource = new ScreenCaptureSource();
     private final ZeehoOutput output = new ZeehoOutput();
     private final AtomicBoolean active = new AtomicBoolean(false);
 
+    private PhoneVideoSource currentSource;
+    private VehicleProfile profile;
+    private int testPattern = TestPatternSource.PATTERN_NONE;
     private Thread worker;
     private Listener listener;
 
@@ -36,13 +40,49 @@ public final class CastSession {
         this.listener = listener;
     }
 
+    /** 应用车型配置与测试图设置；仅在空闲时生效。 */
+    public void configure(Context context) {
+        if (active.get()) return;
+        profile = VehicleProfile.load(context);
+        testPattern = VehicleProfile.testPattern(context);
+        output.configure(profile);
+        screenSource.configure(profile.width, profile.height, profile.fps, profile.bitrateKbps);
+    }
+
+    /** 用手机屏幕采集启动投屏。 */
     public void start(Context context, MediaProjection projection, Listener listener) {
         if (active.get()) return;
         if (listener != null) this.listener = listener;
-        source.bind(projection);
-        engine.attach(source, output);
+        if (profile == null) configure(context);
+        if (projection == null) {
+            LogBus.log("未获得录屏授权，无法开始屏幕投屏");
+            return;
+        }
+        screenSource.bind(projection);
+        currentSource = screenSource;
+        begin(context, "屏幕采集");
+    }
+
+    /** 用测试图启动投屏，不需要录屏授权。 */
+    public void startTest(Context context, Listener listener) {
+        if (active.get()) return;
+        if (listener != null) this.listener = listener;
+        if (profile == null) configure(context);
+        int pattern = testPattern == TestPatternSource.PATTERN_NONE
+                ? TestPatternSource.PATTERN_BARS : testPattern;
+        currentSource = new TestPatternSource(pattern, profile.width, profile.height,
+                profile.fps, profile.bitrateKbps);
+        begin(context, "测试图 " + TestPatternSource.patternName(pattern));
+    }
+
+    private void begin(Context context, String sourceLabel) {
+        engine.attach(currentSource, output);
         active.set(true);
-        LogBus.log("开始极核投屏协商…");
+        FrameStats.get().reset();
+        LogBus.log("开始投屏协商（" + sourceLabel + " → " + profile.shortLabel() + "）");
+        if (!profile.implemented) {
+            LogBus.log("注意：该车型输出协议尚未实现，当前用极核 PXC 栈尝试，可能不出画");
+        }
         worker = new Thread(() -> {
             try {
                 engine.start(context.getApplicationContext());
@@ -63,12 +103,21 @@ public final class CastSession {
         active.set(false);
         engine.stop();
         worker = null;
+        currentSource = null;
         LogBus.log("投屏已停止");
         notifyChanged();
     }
 
     public boolean isActive() {
         return active.get();
+    }
+
+    public VehicleProfile profile() {
+        return profile;
+    }
+
+    public int testPattern() {
+        return testPattern;
     }
 
     public String status() {
@@ -79,8 +128,9 @@ public final class CastSession {
     }
 
     public String detail() {
-        return "来源 " + source.status() + "  ·  输出 " + output.status()
-                + (output.targetIp() == null ? "" : "  ·  仪表 " + output.targetIp());
+        String source = currentSource == null ? "无" : currentSource.status();
+        String target = output.targetIp() == null ? "" : "  ·  仪表 " + output.targetIp();
+        return "来源 " + source + "  ·  输出 " + output.status() + target;
     }
 
     private void notifyChanged() {

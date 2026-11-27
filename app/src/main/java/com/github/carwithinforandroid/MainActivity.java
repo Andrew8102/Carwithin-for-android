@@ -15,18 +15,29 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 import com.github.carwithinforandroid.core.CastSession;
+import com.github.carwithinforandroid.core.FrameStats;
 import com.github.carwithinforandroid.core.LogBus;
+import com.github.carwithinforandroid.core.VehicleProfile;
+import com.github.carwithinforandroid.launcher.CarAppLauncher;
+import com.github.carwithinforandroid.sources.screen.TestPatternSource;
 
+import java.util.ArrayList;
 import java.util.List;
 
-/** 投屏控制台：授权录屏、连接极核仪表、实时查看链路状态。 */
+/** 投屏控制台：车机界面拉起、投屏控制、车型调试配置、测试图与帧率监控。 */
 public class MainActivity extends Activity {
 
     private static final String BG = "#0B1120";
@@ -44,39 +55,58 @@ public class MainActivity extends Activity {
 
     private final CastSession session = CastSession.get();
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final List<VehicleProfile> profiles = VehicleProfile.presets();
 
     private TextView stateValue;
     private TextView stateHint;
     private TextView detailValue;
+    private TextView statsValue;
+    private TextView launchResult;
     private TextView logValue;
+    private EditText packageInput;
+    private EditText activityInput;
+    private EditText targetIpInput;
+    private EditText widthInput;
+    private EditText heightInput;
+    private EditText fpsInput;
+    private EditText bitrateInput;
+    private EditText discoveryPortInput;
+    private Spinner profileSpinner;
+    private Spinner patternSpinner;
+    private CheckBox autoLaunchCheck;
     private Button startButton;
     private Button stopButton;
+    private Button testButton;
 
     private final Runnable refresher = new Runnable() {
         @Override
         public void run() {
+            FrameStats.get().sample();
             render();
-            handler.postDelayed(this, 900);
+            handler.postDelayed(this, 1000);
         }
     };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        session.configure(this);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(Color.parseColor(BG));
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(26), dp(20), dp(32));
+        root.setPadding(dp(20), dp(24), dp(20), dp(32));
         scroll.addView(root, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         addHeader(root);
+        addLaunchCard(root);
         addControlCard(root);
         addStatusCard(root);
-        addChainCard(root);
-        addOutputCard(root);
+        addStatsCard(root);
+        addVehicleCard(root);
+        addDebugCard(root);
         addLogCard(root);
         addFooter(root);
         setContentView(scroll);
@@ -98,42 +128,125 @@ public class MainActivity extends Activity {
     private void addHeader(LinearLayout root) {
         TextView title = new TextView(this);
         title.setText("CarWithin");
-        title.setTextSize(30f);
+        title.setTextSize(28f);
         title.setTypeface(null, Typeface.BOLD);
         title.setTextColor(Color.parseColor(TEXT));
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("手机屏幕  →  极核 AE4 MAX2+ 仪表");
-        subtitle.setTextSize(15f);
+        subtitle.setText("手机屏幕 / 测试图  →  电动两轮车仪表");
+        subtitle.setTextSize(14f);
         subtitle.setTextColor(Color.parseColor(ACCENT));
         subtitle.setPadding(0, dp(4), 0, 0);
         root.addView(subtitle);
 
         TextView desc = new TextView(this);
-        desc.setText("录制屏幕内容并投到仪表 · 1024×480 · 社区实验项目");
-        desc.setTextSize(12f);
+        desc.setText("支持极核 AE4 MAX2+ · 九号 / 台铃 / 小牛 参数预设 · 社区实验项目");
+        desc.setTextSize(11f);
         desc.setTextColor(Color.parseColor(MUTED));
-        desc.setPadding(0, dp(6), 0, dp(12));
+        desc.setPadding(0, dp(5), 0, dp(10));
         root.addView(desc);
     }
 
-    /* ---------------- 控制卡片 ---------------- */
+    /* ---------------- 车机界面启动卡 ---------------- */
+
+    private void addLaunchCard(LinearLayout root) {
+        LinearLayout card = card("① 拉起车机互联界面（投屏前）");
+
+        TextView tip = new TextView(this);
+        tip.setText("手机通常不会自动显示 Car+ / CarWith 界面。先在这里拉起它，让它在本地监听投屏端口，再开始投屏。");
+        tip.setTextSize(11f);
+        tip.setTextColor(Color.parseColor(MUTED));
+        tip.setLineSpacing(0, 1.3f);
+        card.addView(tip);
+
+        String savedPkg = VehicleProfile.launchPackage(this);
+        packageInput = input("包名，如 com.oplus.ocar", savedPkg);
+        card.addView(packageInput);
+        activityInput = input("Activity（可留空，留空用系统入口）", "");
+        card.addView(activityInput);
+
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button launchBtn = button("拉起界面", "#6366F1");
+        launchBtn.setOnClickListener(v -> doLaunch());
+        Button detectBtn = button("检测安装", "#475569");
+        detectBtn.setOnClickListener(v -> detectInstalled());
+        LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp2.leftMargin = dp(8);
+        launchBtn.setLayoutParams(lp1);
+        detectBtn.setLayoutParams(lp2);
+        btnRow.addView(launchBtn);
+        btnRow.addView(detectBtn);
+        card.addView(btnRow);
+
+        launchResult = new TextView(this);
+        launchResult.setTextSize(11f);
+        launchResult.setTextColor(Color.parseColor(AMBER));
+        launchResult.setPadding(0, dp(8), 0, 0);
+        card.addView(launchResult);
+
+        autoLaunchCheck = new CheckBox(this);
+        autoLaunchCheck.setText("开始投屏前自动拉起上面的车机界面");
+        autoLaunchCheck.setTextColor(Color.parseColor(TEXT));
+        autoLaunchCheck.setTextSize(12f);
+        autoLaunchCheck.setChecked(VehicleProfile.autoLaunch(this));
+        autoLaunchCheck.setOnCheckedChangeListener((buttonView, isChecked) ->
+                VehicleProfile.setAutoLaunch(this, isChecked));
+        card.addView(autoLaunchCheck);
+
+        root.addView(card);
+    }
+
+    private void doLaunch() {
+        String pkg = packageInput.getText().toString().trim();
+        String activity = activityInput.getText().toString().trim();
+        VehicleProfile.setLaunchPackage(this, pkg);
+        launchResult.setText(CarAppLauncher.launch(this, pkg, activity));
+    }
+
+    private void detectInstalled() {
+        List<CarAppLauncher.Target> installed = CarAppLauncher.installed(this);
+        if (installed.isEmpty()) {
+            launchResult.setText("未检测到已知车机互联 App。可在系统设置里查看包名后手动填写。");
+            return;
+        }
+        StringBuilder sb = new StringBuilder("已安装：");
+        for (CarAppLauncher.Target t : installed) {
+            sb.append("\n· ").append(t.label).append("  ").append(t.packageName);
+        }
+        launchResult.setText(sb.toString());
+    }
+
+    /* ---------------- 投屏控制卡 ---------------- */
 
     private void addControlCard(LinearLayout root) {
-        LinearLayout card = card("投屏控制");
+        LinearLayout card = card("② 投屏控制");
 
-        startButton = button("开始投屏", "#0EA5E9");
-        startButton.setOnClickListener(v -> requestCastPermission());
+        startButton = button("开始投屏（录屏）", "#0EA5E9");
+        startButton.setOnClickListener(v -> {
+            if (VehicleProfile.autoLaunch(this)) {
+                doLaunch();
+            }
+            requestCastPermission();
+        });
         card.addView(startButton);
+
+        testButton = button("用测试图验证出画（无需录屏授权）", "#8B5CF6");
+        testButton.setOnClickListener(v -> session.startTest(this, null));
+        card.addView(testButton);
 
         stopButton = button("停止投屏", "#475569");
         stopButton.setEnabled(false);
-        stopButton.setOnClickListener(v -> stopService(new Intent(this, CastService.class).setAction(CastService.ACTION_STOP)));
+        stopButton.setOnClickListener(v -> stopService(
+                new Intent(this, CastService.class).setAction(CastService.ACTION_STOP)));
         card.addView(stopButton);
 
         TextView hint = new TextView(this);
-        hint.setText("开始前：① 仪表或官方 App 开启投屏  ② 手机连接仪表 Wi-Fi  ③ 允许本应用录屏");
+        hint.setText("步骤：仪表开启投屏 → 手机连仪表 Wi-Fi → 拉起车机界面 → 开始投屏。测试图用于确认仪表能出画。");
         hint.setTextSize(11f);
         hint.setTextColor(Color.parseColor(MUTED));
         hint.setLineSpacing(0, 1.35f);
@@ -143,30 +256,13 @@ public class MainActivity extends Activity {
         root.addView(card);
     }
 
-    private Button button(String text, String color) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setTextColor(Color.WHITE);
-        b.setTextSize(15f);
-        b.setAllCaps(false);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor(color));
-        bg.setCornerRadius(dp(10));
-        b.setBackground(bg);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(10);
-        b.setLayoutParams(lp);
-        return b;
-    }
-
-    /* ---------------- 状态卡片 ---------------- */
+    /* ---------------- 状态卡 ---------------- */
 
     private void addStatusCard(LinearLayout root) {
         LinearLayout card = card("实时状态");
 
         stateValue = new TextView(this);
-        stateValue.setTextSize(22f);
+        stateValue.setTextSize(20f);
         stateValue.setTypeface(null, Typeface.BOLD);
         stateValue.setTextColor(Color.parseColor(MUTED));
         stateValue.setPadding(0, dp(4), 0, 0);
@@ -188,85 +284,149 @@ public class MainActivity extends Activity {
         root.addView(card);
     }
 
-    private void addChainCard(LinearLayout root) {
-        LinearLayout card = card("投屏链路");
+    /* ---------------- 帧率统计卡 ---------------- */
 
-        addChainNode(card, "①", "屏幕采集", "MediaProjection · 录制屏幕内容", ACCENT);
-        addChainArrow(card);
-        addChainNode(card, "②", "H.264 编码", "1024×480 · 25 FPS · 2500 kbps", ACCENT);
-        addChainArrow(card);
-        addChainNode(card, "③", "极核仪表输出", "PXC/TCP · 10930/10922/10711/10710", ACCENT);
+    private void addStatsCard(LinearLayout root) {
+        LinearLayout card = card("帧率与码率（每秒刷新）");
+        statsValue = new TextView(this);
+        statsValue.setTextSize(12f);
+        statsValue.setTypeface(Typeface.MONOSPACE);
+        statsValue.setTextColor(Color.parseColor(GREEN));
+        statsValue.setPadding(0, dp(2), 0, 0);
+        card.addView(statsValue);
+        root.addView(card);
+    }
+
+    /* ---------------- 车型配置卡 ---------------- */
+
+    private void addVehicleCard(LinearLayout root) {
+        LinearLayout card = card("③ 车型与调试选项");
+
+        profileSpinner = new Spinner(this);
+        List<String> labels = new ArrayList<>();
+        for (VehicleProfile p : profiles) labels.add(p.shortLabel() + " [" + p.status + "]");
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, labels);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        profileSpinner.setAdapter(adapter);
+        card.addView(profileSpinner);
+
+        widthInput = input("宽度（px）", String.valueOf(session.profile().width));
+        heightInput = input("高度（px）", String.valueOf(session.profile().height));
+        fpsInput = input("帧率（FPS）", String.valueOf(session.profile().fps));
+        bitrateInput = input("码率（kbps）", String.valueOf(session.profile().bitrateKbps));
+        discoveryPortInput = input("发现端口", String.valueOf(session.profile().discoveryPort));
+        targetIpInput = input("仪表 IP（可留空自动发现）", VehicleProfile.targetIp(this));
+        card.addView(widthInput);
+        card.addView(heightInput);
+        card.addView(fpsInput);
+        card.addView(bitrateInput);
+        card.addView(discoveryPortInput);
+        card.addView(targetIpInput);
+
+        int selected = 0;
+        for (int i = 0; i < profiles.size(); i++) {
+            if (profiles.get(i).id.equals(session.profile().id)) selected = i;
+        }
+        profileSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                applyProfileToFields(profiles.get(position));
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        profileSpinner.setSelection(selected);
+
+        TextView patternLabel = new TextView(this);
+        patternLabel.setText("测试图模式：");
+        patternLabel.setTextSize(12f);
+        patternLabel.setTextColor(Color.parseColor(TEXT));
+        patternLabel.setPadding(0, dp(8), 0, dp(2));
+        card.addView(patternLabel);
+
+        patternSpinner = new Spinner(this);
+        String[] patternNames = {"关闭（用真实屏幕）", "彩条", "棋盘格", "运动帧"};
+        ArrayAdapter<String> pAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, patternNames);
+        pAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        patternSpinner.setAdapter(pAdapter);
+        patternSpinner.setSelection(session.testPattern());
+        card.addView(patternSpinner);
+
+        Button saveBtn = button("保存配置（下次投屏生效）", "#0D9488");
+        saveBtn.setOnClickListener(v -> saveConfig());
+        card.addView(saveBtn);
+
+        TextView warn = new TextView(this);
+        VehicleProfile p = session.profile();
+        warn.setText("当前车型协议：" + p.codecName() + " / " + p.transportName()
+                + "\n状态：" + p.status + " — " + p.note
+                + "\n注：非极核车型的协议栈尚未实现，参数仅用于调试与取证。");
+        warn.setTextSize(11f);
+        warn.setTextColor(Color.parseColor(p.implemented ? GREEN : AMBER));
+        warn.setPadding(0, dp(8), 0, 0);
+        warn.setLineSpacing(0, 1.3f);
+        card.addView(warn);
 
         root.addView(card);
     }
 
-    private void addChainNode(LinearLayout card, String number, String title, String detail, String color) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView badge = new TextView(this);
-        badge.setText(number);
-        badge.setTextSize(14f);
-        badge.setTextColor(Color.parseColor(color));
-        badge.setTypeface(null, Typeface.BOLD);
-        badge.setWidth(dp(34));
-        row.addView(badge);
-
-        LinearLayout texts = new LinearLayout(this);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        TextView t = new TextView(this);
-        t.setText(title);
-        t.setTextSize(14f);
-        t.setTextColor(Color.parseColor(TEXT));
-        texts.addView(t);
-        TextView d = new TextView(this);
-        d.setText(detail);
-        d.setTextSize(11f);
-        d.setTextColor(Color.parseColor(MUTED));
-        texts.addView(d);
-        row.addView(texts, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        card.addView(row);
+    private void applyProfileToFields(VehicleProfile p) {
+        widthInput.setText(String.valueOf(p.width));
+        heightInput.setText(String.valueOf(p.height));
+        fpsInput.setText(String.valueOf(p.fps));
+        bitrateInput.setText(String.valueOf(p.bitrateKbps));
+        discoveryPortInput.setText(String.valueOf(p.discoveryPort));
     }
 
-    private void addChainArrow(LinearLayout card) {
-        TextView arrow = new TextView(this);
-        arrow.setText("↓");
-        arrow.setTextSize(16f);
-        arrow.setTextColor(Color.parseColor(BORDER));
-        arrow.setPadding(dp(12), dp(2), 0, dp(2));
-        card.addView(arrow);
+    private void saveConfig() {
+        VehicleProfile p = profiles.get(profileSpinner.getSelectedItemPosition());
+        try {
+            p.width = parseInt(widthInput, p.width);
+            p.height = parseInt(heightInput, p.height);
+            p.fps = parseInt(fpsInput, p.fps);
+            p.bitrateKbps = parseInt(bitrateInput, p.bitrateKbps);
+            p.discoveryPort = parseInt(discoveryPortInput, p.discoveryPort);
+            p.save(this);
+            VehicleProfile.setTargetIp(this, targetIpInput.getText().toString().trim());
+            VehicleProfile.setTestPattern(this, patternSpinner.getSelectedItemPosition());
+            session.configure(this);
+            if (p.implemented) {
+                launchResult.setText("已保存：" + p.shortLabel() + " 协议已实现。");
+            } else {
+                launchResult.setText("已保存：" + p.shortLabel() + " 协议待实现，参数仅用于调试。");
+            }
+            LogBus.log("配置已保存 " + p.id + " " + p.width + "×" + p.height
+                    + "@" + p.fps + " discovery=" + p.discoveryPort);
+        } catch (NumberFormatException e) {
+            launchResult.setText("参数格式错误，请检查数字输入。");
+        }
     }
 
-    private void addOutputCard(LinearLayout root) {
-        LinearLayout card = card("仪表与协议");
-
-        addStatusRow(card, "目标仪表", "极核 AE4 MAX2+ 6.2 寸", GREEN);
-        addStatusRow(card, "视频规格", "H.264 · 1024×480 · 25 FPS", TEXT);
-        addStatusRow(card, "握手方式", "RSA2048 身份 · HUID 签名回显", MUTED);
-        addStatusRow(card, "触摸反控", "老协议不支持，操作在手机上完成", MUTED);
-        addStatusRow(card, "兼容性", "其他极核型号 / 固件需独立验证", AMBER);
-
-        root.addView(card);
+    private int parseInt(EditText field, int fallback) {
+        String s = field.getText().toString().trim();
+        return s.isEmpty() ? fallback : Integer.parseInt(s);
     }
+
+    /* ---------------- 日志卡 ---------------- */
 
     private void addLogCard(LinearLayout root) {
         LinearLayout card = card("运行日志");
-
         logValue = new TextView(this);
         logValue.setTextSize(11f);
         logValue.setTypeface(Typeface.MONOSPACE);
         logValue.setTextColor(Color.parseColor(MUTED));
         logValue.setPadding(0, dp(4), 0, 0);
         card.addView(logValue);
-
         root.addView(card);
     }
 
     private void addFooter(LinearLayout root) {
         TextView footer = new TextView(this);
-        footer.setText("v0.1.0  ·  AGPL-3.0\n独立社区项目 · 与厂商无官方关联");
+        footer.setText("v0.2.0  ·  AGPL-3.0\n独立社区项目 · 与厂商无官方关联");
         footer.setTextSize(11f);
         footer.setTextColor(Color.parseColor(BORDER));
         footer.setGravity(Gravity.CENTER);
@@ -342,18 +502,20 @@ public class MainActivity extends Activity {
         stateHint.setText(hintFor(status));
         stateValue.setTextColor(Color.parseColor(colorFor(status)));
         detailValue.setText(session.detail());
+        statsValue.setText(FrameStats.get().report());
 
         boolean active = session.isActive();
         startButton.setEnabled(!active);
+        testButton.setEnabled(!active);
         stopButton.setEnabled(active);
 
         List<String> lines = LogBus.lines();
         StringBuilder builder = new StringBuilder();
-        int from = Math.max(0, lines.size() - 9);
+        int from = Math.max(0, lines.size() - 8);
         for (int i = from; i < lines.size(); i++) {
             builder.append(lines.get(i)).append('\n');
         }
-        logValue.setText(builder.length() == 0 ? "暂无日志，点击「开始投屏」开始。" : builder.toString());
+        logValue.setText(builder.length() == 0 ? "暂无日志。" : builder.toString());
     }
 
     private static String hintFor(String status) {
@@ -362,7 +524,7 @@ public class MainActivity extends Activity {
         if ("STARTING".equals(status) || "WAITING_DASHBOARD".equals(status)) {
             return "正在与仪表协商，请确认仪表已开启投屏且未连其他手机。";
         }
-        return "尚未开始投屏。点击上方按钮授权录屏并连接仪表。";
+        return "尚未开始。可先用测试图验证出画，再开始录屏投屏。";
     }
 
     private static String colorFor(String status) {
@@ -398,35 +560,37 @@ public class MainActivity extends Activity {
         return card;
     }
 
-    private void addStatusRow(LinearLayout parent, String label, String value, String color) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(7), 0, dp(7));
+    private EditText input(String hint, String value) {
+        EditText edit = new EditText(this);
+        edit.setHint(hint);
+        edit.setText(value);
+        edit.setTextColor(Color.parseColor(TEXT));
+        edit.setHintTextColor(Color.parseColor(BORDER));
+        edit.setTextSize(13f);
+        edit.setSingleLine(true);
+        edit.setBackgroundResource(android.R.drawable.edit_text);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(8);
+        edit.setLayoutParams(lp);
+        return edit;
+    }
 
-        TextView dot = new TextView(this);
-        dot.setText("●");
-        dot.setTextSize(10f);
-        dot.setTextColor(Color.parseColor(color));
-        dot.setPadding(0, 0, dp(8), 0);
-        row.addView(dot);
-
-        LinearLayout texts = new LinearLayout(this);
-        texts.setOrientation(LinearLayout.VERTICAL);
-        TextView t = new TextView(this);
-        t.setText(label);
-        t.setTextSize(13f);
-        t.setTextColor(Color.parseColor(TEXT));
-        texts.addView(t);
-        TextView d = new TextView(this);
-        d.setText(value);
-        d.setTextSize(11f);
-        d.setTextColor(Color.parseColor(MUTED));
-        texts.addView(d);
-        row.addView(texts, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        parent.addView(row);
+    private Button button(String text, String color) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(14f);
+        b.setAllCaps(false);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.parseColor(color));
+        bg.setCornerRadius(dp(10));
+        b.setBackground(bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(10);
+        b.setLayoutParams(lp);
+        return b;
     }
 
     private int dp(int value) {
