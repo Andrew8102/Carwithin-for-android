@@ -20,6 +20,10 @@
 #           ADB_BIN（自定义 adb 路径）、PY（自定义 python）
 set -uo pipefail
 
+# Git Bash（MSYS）会把 adb 参数里的 /sdcard/xxx 自动改写成 D:/xxx，
+# 于是 pull/screencap 全部报 "No such file or directory"。macOS/Linux 忽略这个变量。
+export MSYS_NO_PATHCONV=1
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # adb 查找顺序：$ADB_BIN 显式指定 → 项目内 tools → 项目上一级 tools → 常见安装位置 → PATH
@@ -323,8 +327,34 @@ cmd_shot() {
   require_device
   local name="${1:-shot-$(date +%H%M%S).png}"
   mkdir -p "$ROOT/dist/shots"
-  "$ADB" exec-out screencap -p > "$ROOT/dist/shots/$name"
-  echo "已保存 dist/shots/$name"
+  local out="$ROOT/dist/shots/$name"
+
+  # 两个真机踩过的坑：
+  # 1) Car+ 会创建虚拟显示，`screencap` 见到多块屏会 "defaulting to the first"，
+  #    很可能截到 Car+ 的虚拟显示而不是主屏 —— 必须用 -d 指定主屏 id。
+  # 2) Android 16+ 的 `screencap -p` 会把警告打到 stdout，`exec-out ... > file`
+  #    得到的文件开头是 "[Warning] ..." 而不是 PNG 头，图片直接打不开。
+  #    所以改成先存到设备再 pull。
+  local disp
+  disp=$("$ADB" shell "dumpsys SurfaceFlinger --display-id" 2>/dev/null | tr -d '\r' \
+         | grep -m1 "HWC display 0" | awk '{print $2}')
+  case "$disp" in ''|*[!0-9]*) disp="" ;; esac
+
+  local remote="/sdcard/cw-shot.png"
+  if [ -n "$disp" ]; then
+    "$ADB" shell "screencap -d $disp $remote" >/dev/null 2>&1
+  else
+    "$ADB" shell "screencap $remote" >/dev/null 2>&1
+  fi
+
+  if "$ADB" pull "$remote" "$out" >/dev/null 2>&1 && [ -s "$out" ]; then
+    "$ADB" shell "rm -f $remote" >/dev/null 2>&1
+    echo "已保存 dist/shots/$name${disp:+（display $disp）}"
+  else
+    echo "✗ 截图失败。试：adb shell screencap -d <display-id> /sdcard/a.png 再 adb pull"
+    echo "  可用的 display："
+    "$ADB" shell "dumpsys SurfaceFlinger --display-id" 2>/dev/null | tr -d '\r' | head -5
+  fi
 }
 
 

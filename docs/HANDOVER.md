@@ -111,6 +111,53 @@
 这条路的定位是**取证**：能证明「CarLife → 解码 → 屏幕 → 录屏 → 仪表」这条链是通的，
 但成品体验受手机屏幕比例和极核 App 后台策略限制，不能替代 Plan A。
 
+### 已经真机验证到哪一步（0.5.3-dev.32）
+
+| 验证项 | 结果 |
+| --- | --- |
+| 点「全屏预览」后进全屏 | ✅ 横屏、状态栏和导航栏消失、Toast 提示出现 |
+| 画面等比居中 | ✅ 848×480 按高度铺满，左右留黑边（手机屏约 2.34:1，比画面宽） |
+| 返回键退出 | ✅ 日志打出「已退出全屏预览」，回到列表 |
+| 崩溃 | ✅ 无 |
+
+### 现场要盯的两个新坑（这次真机踩到的）
+
+**坑 1：Car+ 会抢焦点。** 全屏后 CarLife 会话一连通，`mCurrentFocus` 就变成
+`com.oplus.ocar/OCarLauncherImprovedActivity`，我们的窗口可能被盖住。
+判断方法：
+
+```bash
+adb shell "dumpsys window | grep mCurrentFocus"
+```
+
+如果焦点是 ocar，用最近任务键切回本应用再看。**切回来之后如果焦点稳住了，
+就说明只是建立会话那一下抢的，不影响录屏**；如果反复被抢，这条路就只剩"录 Car+ 自己"。
+
+**坑 2：`screencap` 会被 Car+ 的虚拟显示骗。** 系统里有多个 display 时它
+"defaulting to the first display found"，很可能截到 Car+ 的虚拟显示而不是主屏 ——
+你以为自己截的是本应用，其实是 Car+ 的内容。**截图必须指定主屏 id**：
+
+```bash
+adb shell "dumpsys SurfaceFlinger --display-id"      # 找 HWC display 0 那一行的 id
+adb shell "screencap -d <id> /sdcard/a.png"
+adb pull /sdcard/a.png
+```
+
+`./scripts/adb-carlife.sh shot` 已经按这个逻辑改好了，会自己找主屏 id。
+
+> 顺带一个坑：Android 16+ 的 `screencap -p` 会把警告打到 stdout，
+> `adb exec-out screencap -p > a.png` 得到的文件开头是 `[Warning] ...` 而不是 PNG 头，
+> 图片打不开。用「存设备再 pull」的方式。
+
+### 待确认（下次连上手机就能做）
+
+1. **`adb shell screenrecord`（就是 MediaProjection）能不能录到 Car+ 的全屏界面。**
+   这次录了一段 3 秒的 `rec.mp4`（211KB）在 `dist/shots/`，但手机被拔了没来得及抽帧看。
+   如果能录到 —— 那连全屏预览都不需要，直接让极核 App 录 Car+ 就行。
+   > 用我们的 App 验更快：点「录屏投屏」，看它编码出去的帧是不是 Car+ 画面。
+2. Car+ 抢焦点是"只抢一次"还是"持续抢"，决定这条路能不能用。
+
+
 ## 5. 拿到 SSID/密码的四种办法
 
 现场按顺序试，第一种最省事：
