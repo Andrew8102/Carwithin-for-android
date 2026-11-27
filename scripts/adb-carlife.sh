@@ -8,6 +8,9 @@
 #   ./scripts/adb-carlife.sh logs [秒数]          抓 logcat（默认 60 秒）
 #   ./scripts/adb-carlife.sh install [apk路径]    安装 debug 包
 #   ./scripts/adb-carlife.sh shot [文件名]        截图到 dist/
+#   ./scripts/adb-carlife.sh dbg <命令> [秒数]    广播驱动 debug 包，不用手点屏幕
+#       命令：connect | connect-launch | testpattern | stop | state | diagnose
+#       例：./scripts/adb-carlife.sh dbg connect 15
 #
 # 环境变量：CAR_PKG（默认 com.oplus.ocar）、APP_PKG（默认 com.github.carwithinforandroid）
 set -uo pipefail
@@ -50,6 +53,9 @@ CarWithin 真机调试助手（便携 adb，无需安装 Android SDK）
   ./scripts/adb-carlife.sh logs [秒数]          抓 logcat（默认 60 秒），同时盯端口变化
   ./scripts/adb-carlife.sh install [apk路径]    卸载旧包并安装 debug 包
   ./scripts/adb-carlife.sh shot [文件名]        截图到 dist/shots/
+  ./scripts/adb-carlife.sh dbg <命令> [秒数]    广播驱动 debug 包，不用手点屏幕
+      命令：connect | connect-launch | testpattern | stop | state | diagnose
+      例：./scripts/adb-carlife.sh dbg connect 15
 
 环境变量：CAR_PKG（默认 com.oplus.ocar）、APP_PKG（默认 com.github.carwithinforandroid）、
           ADB_BIN（自定义 adb 路径）
@@ -217,6 +223,32 @@ cmd_shot() {
   echo "已保存 dist/shots/$name"
 }
 
+
+# 通过广播驱动 debug 包里的 DebugCommandReceiver，避免手点屏幕（锁屏时也能用）
+cmd_dbg() {
+  local cmd="${1:-state}" secs="${2:-10}" action
+  case "$cmd" in
+    connect)        action="CARLIFE_CONNECT" ;;
+    connect-launch) action="CARLIFE_CONNECT_LAUNCH" ;;
+    testpattern)    action="TESTPATTERN" ;;
+    stop)           action="STOP" ;;
+    state)          action="STATE" ;;
+    diagnose)       action="DIAGNOSE" ;;
+    *) echo "未知命令：$cmd（可用 connect / connect-launch / testpattern / stop / state / diagnose）"; return 1 ;;
+  esac
+  "$ADB" logcat -c >/dev/null 2>&1
+  echo "== 发送 DEBUG.$action =="
+  "$ADB" shell am broadcast -a "com.github.carwithinforandroid.DEBUG.$action" 2>&1 | tr -d '\r' | head -2
+  echo "== 观察 ${secs}s =="
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$secs" "$ADB" logcat -s CarWithin 2>/dev/null | tr -d '\r' | grep -v '^-----'
+  else
+    "$ADB" logcat -d -s CarWithin 2>/dev/null | tr -d '\r' | grep -v '^-----'; sleep "$secs"
+  fi
+  echo "== 端口 =="
+  cmd_ports
+}
+
 case "${1:-}" in
   wait) cmd_wait ;;
   inspect) cmd_inspect ;;
@@ -225,5 +257,6 @@ case "${1:-}" in
   logs) shift; cmd_logs "${1:-60}" ;;
   install) shift; cmd_install "${1:-}" ;;
   shot) shift; cmd_shot "${1:-}" ;;
+  dbg) shift; cmd_dbg "${1:-state}" "${2:-10}" ;;
   *) usage ;;
 esac

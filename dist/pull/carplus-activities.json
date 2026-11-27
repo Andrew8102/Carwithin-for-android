@@ -1,0 +1,181 @@
+{
+  "package": "com.oplus.ocar",
+  "total": 128,
+  "exported": 46,
+  "launcher": [
+    "com.oplus.ocar.carmode.CarModeActivity",
+    "com.oplus.ocar.settings.PermissionsRequestActivity",
+    "com.oplus.ocar.smartdrive.shell.DriveModeActivity"
+  ],
+  "activities": [
+    {
+      "name": "com.oplus.ocar.CarlifeActivity",
+      "exported": true,
+      "target": null,
+      "actions": [],
+      "categories": [],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.connect.carlife.CarlifeAccessoryFoundActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "android.hardware.usb.action.USB_ACCESSORY_ATTACHED",
+        "android.hardware.usb.action.USB_ACCESSORY_DETACHED"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.connect.ec.EcAccessoryFoundActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "android.hardware.usb.action.USB_ACCESSORY_ATTACHED"
+      ],
+      "categories": [],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.AdjustScreenActivity",
+      "exported": true,
+      "target": null,
+      "actions": [],
+      "categories": [],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.CarlifeAdbWiredConnectGuideActivity",
+      "exported": true,
+      "target": null,
+      "actions": [],
+      "categories": [],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.ConnectTypeRouteActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "oplus.intent.action.CONNECT_TYPE_ROUTE_ACTIVITY"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.DownloadCarlifeComponentActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "oplus.intent.action.DOWNLOAD_CARLIFE_COMPONENT"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.WiredConnectGuideActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "oplus.intent.action.WIRED_CONNECT_GUIDE_ACTIVITY"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.WirelessConnectGuideActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "oplus.intent.action.ICCOA_WIRELESS_CONNECT_ACTIVITY"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.resolution.CastResolutionManagerActivity",
+      "exported": true,
+      "target": null,
+      "actions": [],
+      "categories": [],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.union.CarUnionCarDeviceSettingsActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "oplus.intent.action.CAR_COMMON_SETTINGS"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.union.CarUnionCastSettingsActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "com.oplus.travelengine.JUMPSHAKE",
+        "oplus.intent.action.CAR_DEVICE_DETAIL",
+        "oplus.intent.action.JUMP_USE_PHONE_NET_PREF"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.union.CarUnionConnectActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "oplus.intent.action.OCAR_CAST_CONNECT_ACTIVITY"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.union.CarUnionConnectRouteActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "oplus.intent.action.START_CAR_CONNECT"
+      ],
+      "categories": [
+        "android.intent.category.DEFAULT"
+      ],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocar.settings.connect.union.CarUnionModelActivity",
+      "exported": true,
+      "target": null,
+      "actions": [],
+      "categories": [],
+      "has_launcher": false
+    },
+    {
+      "name": "com.oplus.ocarlinkmanager.ui.AccessoryFoundActivity",
+      "exported": true,
+      "target": null,
+      "actions": [
+        "android.hardware.usb.action.USB_ACCESSORY_ATTACHED",
+        "android.hardware.usb.action.USB_ACCESSORY_DETACHED"
+      ],
+      "categories": [
+        "andro

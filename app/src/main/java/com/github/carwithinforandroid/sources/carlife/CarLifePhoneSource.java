@@ -23,6 +23,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class CarLifePhoneSource implements PhoneVideoSource {
 
     /**
+     * 向 Car+ 请求的画布尺寸：<b>848×480</b>。
+     *
+     * <p>这不是极核仪表的 1024×480。CarLife 的 VIDEO_INIT 只接受白名单里的标准画布
+     * （848×480 / 800×480 / 1280×720 等），CarNine 在 realme 真机上验证过的就是 848×480。
+     * 之前这里传极核的 1024×480，MD 很可能直接不认，于是卡在「请求画布」之后收不到任何帧。
+     * 尺寸与仪表不一致的问题留到后面用 MediaCodec 转码解决，现阶段先保证能收到帧。
+     */
+    public static final int CARLIFE_WIDTH = 848;
+    public static final int CARLIFE_HEIGHT = 480;
+    public static final int CARLIFE_FPS = 25;
+
+    /**
      * 等待 Car+ 在本机监听端口的最长时间。
      *
      * <p>实测 Car+ 被拉起后端口只开很短一瞬，所以本类必须<b>先</b>进入等待，

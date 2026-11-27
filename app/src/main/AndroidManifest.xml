@@ -44,6 +44,20 @@
             android:name=".CastService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- 真机调试入口：仅 debuggable 包响应，正式包自动忽略（见 DebugCommandReceiver） -->
+        <receiver
+            android:name=".debug.DebugCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.github.carwithinforandroid.DEBUG.CARLIFE_CONNECT" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.CARLIFE_CONNECT_LAUNCH" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.TESTPATTERN" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.STOP" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.STATE" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.DIAGNOSE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

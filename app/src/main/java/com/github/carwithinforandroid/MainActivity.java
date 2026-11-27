@@ -372,18 +372,18 @@ public class MainActivity extends Activity {
         final String pkgFinal = pkg;
         final String actFinal = activityInput.getText().toString().trim();
 
-        LogBus.log("一键流程：先在后台等 Car+ 的 7 个端口（最长 30s），再拉起 Car+");
-        launchResult.setText("已在后台等待 Car+ 端口，约 0.3 秒后自动拉起 Car+…\n"
-                + "弹出 Car+ 后请停留其中别退回桌面。\n"
+        LogBus.log("一键流程：先在后台连 7 个端口；连上了就不再拉起 Car+");
+        launchResult.setText("已在后台连接 Car+ 的 7 个端口…\n"
+                + "若 7 个端口本来就开着，会直接握手，不会拉起 Car+。\n"
+                + "只有一直连不上时才会拉起 Car+（此时请停在 Car+ 里别退回桌面）。\n"
                 + "看下方「运行日志」是否出现「七个通道全部连通」。");
-        Toast.makeText(this, "后台已开始等端口，马上拉起 Car+", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "后台已开始连端口", Toast.LENGTH_SHORT).show();
 
         session.startCarLife(this, null);
 
-        handler.postDelayed(() -> {
-            if (!session.isActive()) return;
-            launchCarPlus(pkgFinal, actFinal, "第 1 次", 0);
-        }, 300);
+        // 实测（2026-11-27）：拉起 CarlifeActivity 会把正在监听的 CarLife 进程替换成
+        // com.baidu.carlife.oppo，本机 socket 随即被 reset。所以端口已连通时绝不能再去拉起。
+        handler.postDelayed(() -> retryLaunchCarPlus(pkgFinal, actFinal, "第 1 次", 0), 1500);
         // 之后只在「还在等端口」时补拉，且每次换一个疑似入口，避免把已握手的会话打断
         handler.postDelayed(() -> retryLaunchCarPlus(pkgFinal, actFinal, "第 2 次", 1), 4500);
         handler.postDelayed(() -> retryLaunchCarPlus(pkgFinal, actFinal, "第 3 次", 2), 9000);
@@ -391,9 +391,12 @@ public class MainActivity extends Activity {
 
     private void retryLaunchCarPlus(String pkg, String act, String round, int index) {
         if (!session.isActive()) return;
-        // 已经连上或已出画就别再拉，免得把进行中的握手打断
+        // 已经连上或已出画就别再拉：拉起 Car+ 会替换 CarLife 进程，把正在进行的会话 reset 掉
         String phase = session.sourcePhase();
-        if (phase.contains("连通") || phase.contains("画布") || previewFrames > 0) return;
+        if (phase.contains("连通") || phase.contains("画布") || previewFrames > 0) {
+            LogBus.log(round + "：端口已连通（" + phase + "），跳过拉起 Car+");
+            return;
+        }
         launchCarPlus(pkg, act, round, index);
     }
 

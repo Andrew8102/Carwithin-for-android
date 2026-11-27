@@ -74,8 +74,12 @@ public final class CastSession {
         if (active.get()) return;
         if (listener != null) this.listener = listener;
         if (profile == null) configure(context);
-        currentSource = new CarLifePhoneSource(profile.width, profile.height, profile.fps);
-        begin(context, "CarLife 车机端");
+        // 画布尺寸必须用 CarLife 的标准值 848x480，不能用极核的 1024x480：
+        // CarLife 的 VIDEO_INIT 只认白名单画布，传 1024x480 大概率协商不成、收不到帧。
+        currentSource = new CarLifePhoneSource(CarLifePhoneSource.CARLIFE_WIDTH,
+                CarLifePhoneSource.CARLIFE_HEIGHT, CarLifePhoneSource.CARLIFE_FPS);
+        begin(context, "CarLife 车机端 " + CarLifePhoneSource.CARLIFE_WIDTH + "x"
+                + CarLifePhoneSource.CARLIFE_HEIGHT + "@" + CarLifePhoneSource.CARLIFE_FPS);
     }
 
     /** 用测试图启动投屏，不需要录屏授权。 */
