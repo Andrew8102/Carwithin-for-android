@@ -23,6 +23,7 @@
 > 完成度以 [开发路线图](#开发路线图) 为准，不看本文其他章节的措辞。
 
 > **换机器继续调试的先看这里**：[docs/HANDOVER.md](docs/HANDOVER.md) —— 现状结论、参照项目给出的答案、macOS 上从零到装包、以及车机旁的现场 runbook，都在那一个文件里。
+> 如果 PXC 直连在现场卡住，还有一条备用路径：**全屏预览 + 极核 App 录屏**（见该文档第 4 节），用来快速证明画面能不能上仪表。
 
 > **协议来源**：极核 PXC/TCP 协议来自 [CarWithin](https://github.com/xmz28/CarWithin) 的 iOS 逆向实现，已按原文逐项移植为 Java；CarLife 车机端来自 [CarNine](https://github.com/xiaolu5hao/CarNine-Ninebot)。移植 ≠ 可用，都需要真机取证。
 

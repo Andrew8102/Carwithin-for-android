@@ -17,7 +17,7 @@
 | 本地预览出图 | ✅ 出 Car+ 车机桌面 | 画布 **848×480@25**（不是 profile 里写的 1024×480） |
 | 预览触控回传 | ✅ 可用 | 点 `423,239`（848×480 正中）命中；点导航卡切到地图并起播音乐 |
 | Wi-Fi Direct 通道 | ⚠️ 只能扫设备 | 能读到本机设备名 `OPPO Find N5`，8 秒干净退出；家中无仪表，扫不到符合预期 |
-| 极核 PXC 会话本体 | ⏸ 未实测 | 需要在仪表旁边跑，见第 6 节 |
+| 极核 PXC 会话本体 | ⏸ 未实测 | 需要在仪表旁边跑，见第 7 节 |
 
 一条容易踩的坑已经写进脚本：**Car+ 必须冷启动**。它后台跑过之后，再连只会停在「OPPO 智行」启动页（预览 luma 恒 19）；`am force-stop com.oplus.ocar` 后重连才进桌面（luma 26~28）。
 
@@ -33,6 +33,14 @@
 这一节是这次核对参考实现的核心结论，不要再绕回去。
 
 ### CarWithin（iOS，主项目）
+
+> `reference/` 在 `.gitignore` 里，**不会随仓库到 Mac**。想在新机器上重看这几个上游项目：
+> ```bash
+> mkdir -p reference && cd reference
+> git clone --depth 1 https://github.com/xmz28/CarWithin
+> git clone --depth 1 https://github.com/xiaolu5hao/CarNine-Ninebot CarNine
+> ```
+> 下面这些结论都是从源文件读出来的，不看也不会影响现场调试。
 
 去读 `reference/CarWithin/App/` 就会发现：**它没有一行组网代码。**
 
@@ -67,13 +75,50 @@
 
 代码已按这个顺序改好（`ZeehoOutput.start`）。**①②③ 哪条能成，就是现场要验证的东西。**
 
-## 4. 拿到 SSID/密码的四种办法
+## 4. 曲线救国：全屏预览 + 极核 App 录屏（Plan B，已实现待实测）
+
+如果 PXC 直连（Plan A）在现场卡住，这条能立刻验证「画面到底能不能上仪表」，
+因为它完全绕开了协议和组网 —— 让极核 App 自己去连仪表。
+
+**为什么之前说这条路不行、现在又行了：**
+
+之前否掉是因为 Car+ 的画面画在它自己的**虚拟显示**里，MediaProjection 录系统屏幕录不到。
+但现在我们的 App 已经把 CarLife 帧解码成 Bitmap 画在**普通 View** 上 ——
+它就是普通的系统屏幕内容，录屏能录到。
+
+**操作顺序（顺序不能错）：**
+
+```
+① 主界面先连上 Car+，确认预览里有画面（./scripts/adb-carlife.sh fresh 25）
+② 点「全屏预览（给录屏投屏用）」→ 横屏 + 常亮 + 状态栏隐藏
+③ 切到极核 App 点「投屏」→ 选「整个屏幕」→ 授权
+④ 立刻切回本 App（否则录到的是极核 App 自己）
+```
+
+第 ④ 步是这条路最容易翻车的地方：MediaProjection 录的是**整个屏幕**，
+谁在前台就录谁。授权完必须马上切回来。
+
+**预期能力与限制：**
+
+| 项目 | 情况 |
+| --- | --- |
+| 仪表出画 | 有可能，取决于极核 App 怎么处理录屏画面 |
+| 画面比例 | 由手机屏幕比例决定（约 2.2:1），不是 848×480；仪表缩放时可能有裁切或黑边 |
+| 仪表反控 | ❌ 没有。极核 App 的录屏投屏一般不带反控 |
+| 手机操作车机 | ✅ 可以。全屏预览上的触摸仍然回传给 CarLife，手机等于一块触控板 |
+| 稳定性 | 取决于极核 App 能不能在后台持续录屏（部分 ROM 会限制后台运行） |
+
+这条路的定位是**取证**：能证明「CarLife → 解码 → 屏幕 → 录屏 → 仪表」这条链是通的，
+但成品体验受手机屏幕比例和极核 App 后台策略限制，不能替代 Plan A。
+
+## 5. 拿到 SSID/密码的四种办法
 
 现场按顺序试，第一种最省事：
 
 1. **在极核 App 点一次投屏，然后看手机当前连的 SSID**
    ```bash
    adb shell dumpsys wifi | grep -iE "SSID|mWifiInfo" | head -10
+   adb shell cmd wifi status          # 新系统上这个更干净
    ```
    拿到名字后再试热点连接。密码如果猜不到，先用开放网络那一路试（传空 psk）。
 2. **密码可能就写在仪表说明书/车机设置里**（很多车厂是固定密码，如 `12345678`）。
@@ -85,7 +130,7 @@
 4. **兜底**：不折腾组网，就让用户在极核 App 点投屏（那时手机已经连上了），
    我们的 App 走顺序①直接扫 —— 这也完全能跑，只是多一步手动操作。
 
-## 5. 换到 MacBook 上的第一个小时
+## 6. 换到 MacBook 上的第一个小时
 
 ### 5.1 装 adb（只有这一个硬依赖）
 
@@ -131,7 +176,7 @@ echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
 
 如果脚本报 `bad interpreter: bash^M`，说明仓库里的换行符被改坏了 —— 仓库已加 `.gitattributes` 强制 LF，正常不会出现；真遇到就 `sed -i '' 's/\r$//' scripts/adb-carlife.sh`。
 
-## 6. 现场调试 runbook（按顺序做，每步都有明确的「成功长什么样」）
+## 7. 现场调试 runbook（按顺序做，每步都有明确的「成功长什么样」）
 
 手机接 MacBook，坐到车机旁边。全程不用手点 App 界面，靠 adb 广播驱动。
 
@@ -156,6 +201,12 @@ adb shell pm grant com.github.carwithinforandroid android.permission.ACCESS_FINE
 ### 第 2 步：先试「极核 App 已经连上」这条路
 
 在手机上点极核 App 的「投屏」（会弹安卓录屏授权，随便给它，我们不用它录屏）。
+等它把网络连上后，**立刻把极核 App 的录屏停掉 / 退出投屏**：
+
+- 停掉录屏：把通知栏那条「正在录屏」的通知关掉，或者直接 `am force-stop` 极核 App；
+- **不要再点"结束投屏"这种会拆网络的按钮** —— 我们要保留它建好的网络，只是不要它占着仪表。CarWithin 的说明里也是「退出其他投屏 App，再启动本程序」。
+- 仪表同一时间只认一个客户端，两个都连着会各自都拿不到 `0x72` 拉帧请求，表现成"握手成功但没画面"。
+
 然后：
 
 ```bash
@@ -165,10 +216,6 @@ adb shell pm grant com.github.carwithinforandroid android.permission.ACCESS_FINE
 盯两件事：
 - 网卡里有没有多出 `p2p0=192.168.x.x` 或 wlan0 换成了新网段；
 - 记下这个网段，它就是仪表所在网段。
-
-```bash
-./scripts/adb-carlife.sh dbg diagnose 8   # 再看一次，确认 SSID/网段稳定
-```
 
 > 这一步的价值：**用官方 App 把网组起来，验证我们应用层能不能通。**
 > 如果能通 → 说明 PXC 协议部分没问题，剩下的只是「怎么自己组网」这个工程问题。
@@ -223,7 +270,7 @@ adb shell pm grant com.github.carwithinforandroid android.permission.ACCESS_FINE
 每次只看一行结论：`仪表 x.x.x.1:10930 有响应 → 可以点投屏了`。
 有响应说明网络通了，剩下的是应用层；没响应就是网络还没通，继续换方法。
 
-## 7. 命令速查
+## 8. 命令速查
 
 ```bash
 # 环境/设备
@@ -258,7 +305,7 @@ adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.DIAGNOSE \
 > 以及 `AndroidManifest.xml` 的 intent-filter。漏了清单，`am broadcast` 只会回
 > `Broadcast completed: result=0`（看起来成功），但接收器根本收不到。
 
-## 8. 架构速查
+## 9. 架构速查
 
 ```
 Car+ (com.oplus.ocar)                本应用                         极核仪表
@@ -287,7 +334,7 @@ Car+ (com.oplus.ocar)                本应用                         极核仪
 | `outputs/zeeho/ZeehoConnection.java` | PXC 握手与帧发送 |
 | `ui/PreviewView.java` | 预览 + 触控回传 |
 
-## 9. 协议速查（极核 6.2 寸）
+## 10. 协议速查（极核 6.2 寸）
 
 | 端口 | 方向 | 用途 |
 | --- | --- | --- |
@@ -303,7 +350,7 @@ Car+ (com.oplus.ocar)                本应用                         极核仪
 
 画布参数：6.2 寸官方申报 **1024×480 @25fps @2.5Mbit/s**；实际 CarLife 只能给 **848×480@25**。
 
-## 10. 排错速查
+## 11. 排错速查
 
 | 现象 | 最可能的原因 | 怎么办 |
 | --- | --- | --- |
@@ -317,9 +364,9 @@ Car+ (com.oplus.ocar)                本应用                         极核仪
 | 重连报端口占用 | 上次没 close 掉监听的三个端口 | `ZeehoOutput.start` 失败分支要 `created.close()` |
 | 换 Mac 后脚本报 `bash^M` | 仓库换行符 | 已加 `.gitattributes` 强制 LF |
 
-## 11. 下一步（按价值排序）
+## 12. 下一步（按价值排序）
 
-1. 现场验证第 6 节第 3 步（848×480 能不能出画）—— 决定要不要做缩放重编码，这是工作量的分水岭。
+1. 现场验证第 7 节第 3 步（848×480 能不能出画）—— 决定要不要做缩放重编码，这是工作量的分水岭。
 2. 拿到仪表热点 SSID/密码，验证 `WifiNetworkSpecifier` 路径能不能完全脱离极核 App。
 3. 仪表反控触摸（10711 `0x20`）。
 4. 稳定性：长时间投屏、切后台、锁屏后恢复。

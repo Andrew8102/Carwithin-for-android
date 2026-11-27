@@ -6,6 +6,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -18,11 +19,15 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
@@ -92,6 +97,13 @@ public class MainActivity extends Activity {
 
     private PreviewView previewView;
     private TextView previewHint;
+    /** 主界面根容器。全屏预览时会被换掉，退出时要还回来。 */
+    private ScrollView contentScroll;
+    /** 预览原本挂在哪、挂在第几个位置、尺寸多少 —— 退出全屏时按原样塞回去。 */
+    private ViewGroup previewParent;
+    private ViewGroup.LayoutParams previewParams;
+    private int previewIndex;
+    private boolean fullscreen;
     /** 状态卡里的网卡摘要（p2p0/wlan0=IP），2 秒刷一次，避免每帧枚举网卡。 */
     private String nicText = "";
     private long nicAt;
@@ -137,6 +149,7 @@ public class MainActivity extends Activity {
         addVehicleCard(root);
         addLogCard(root);
         addFooter(root);
+        contentScroll = scroll;
         setContentView(scroll);
 
         setupPreviewDecoder();
@@ -639,7 +652,139 @@ public class MainActivity extends Activity {
         previewHint.setText("尚未收到 Car+ 画面。CarLife 链路一旦收到帧，这里会直接显示。");
         card.addView(previewHint);
 
+        // 曲线救国：全屏之后这块画面就是普通系统窗口，系统录屏/极核 App 的录屏都能录到它。
+        // 不用碰 PXC 协议，也不用管组网 —— 让极核 App 自己去连仪表。
+        Button fullBtn = new Button(this);
+        fullBtn.setText("全屏预览（给录屏投屏用）");
+        fullBtn.setAllCaps(false);
+        fullBtn.setOnClickListener(v -> enterFullscreen());
+        LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        flp.topMargin = dp(8);
+        card.addView(fullBtn, flp);
+
+        TextView fullTip = new TextView(this);
+        fullTip.setTextSize(10f);
+        fullTip.setTextColor(Color.parseColor(MUTED));
+        fullTip.setPadding(0, dp(4), 0, 0);
+        fullTip.setText("全屏时：横屏 + 常亮 + 隐藏状态栏，画面按 848×480 等比居中。"
+                + "按返回键退出。\n"
+                + "用法：先全屏 → 再去极核 App 点「投屏」选「整个屏幕」授权 → 切回本页。"
+                + "录制的是这块画面，触控仍可作用于车机（手机相当于触控板）。");
+        card.addView(fullTip);
+
         root.addView(card);
+    }
+
+    /* ---------------- 全屏预览 ---------------- */
+
+    /**
+     * 把预览从卡片里摘出来铺满整个窗口。
+     *
+     * <p>为什么这样做能绕开协议：Car+ 的画原本在它自己的虚拟显示里，系统录屏录不到；
+     * 但经过我们解码后画在普通 View 上，就变成了普通的系统屏幕内容，
+     * MediaProjection（极核 App 点投屏时弹的那个授权）就能录到。
+     */
+    private void enterFullscreen() {
+        if (fullscreen || previewView == null) return;
+        android.view.ViewParent parent = previewView.getParent();
+        if (!(parent instanceof ViewGroup)) return;
+
+        previewParent = (ViewGroup) parent;
+        previewIndex = previewParent.indexOfChild(previewView);
+        previewParams = previewView.getLayoutParams();
+        previewParent.removeView(previewView);
+
+        FrameLayout stage = new FrameLayout(this);
+        stage.setBackgroundColor(Color.BLACK);
+        previewView.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        stage.addView(previewView);
+
+        fullscreen = true;
+        setContentView(stage);
+        // 录屏最怕息屏和状态栏：一个把画面掐了，一个录进去很丑
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+        hideSystemBars();
+
+        Toast.makeText(this, previewFrames > 0
+                        ? "已全屏。录屏授权后要立刻切回本页，否则录到的是极核 App 自己"
+                        : "已全屏，但还没收到 Car+ 画面。建议先回主界面连上再进来",
+                Toast.LENGTH_LONG).show();
+        LogBus.log("已进入全屏预览（返回键退出）。顺序：极核 App 点「投屏」→ 选「整个屏幕」→ 授权"
+                + "→ 立刻切回本页。录的是整个屏幕，本页在前台才会被录到。");
+    }
+
+    private void exitFullscreen() {
+        if (!fullscreen) return;
+        fullscreen = false;
+
+        android.view.ViewParent parent = previewView == null ? null : previewView.getParent();
+        if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(previewView);
+        if (previewView != null && previewParent != null) {
+            previewView.setLayoutParams(previewParams);
+            int at = Math.max(0, Math.min(previewIndex, previewParent.getChildCount()));
+            previewParent.addView(previewView, at);
+        }
+        previewParent = null;
+        previewParams = null;
+
+        if (contentScroll != null) setContentView(contentScroll);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        showSystemBars();
+        LogBus.log("已退出全屏预览");
+    }
+
+    private void hideSystemBars() {
+        Window window = getWindow();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false);
+            WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                controller.hide(WindowInsets.Type.systemBars());
+                controller.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            window.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN);
+        }
+    }
+
+    private void showSystemBars() {
+        Window window = getWindow();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(true);
+            WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) controller.show(WindowInsets.Type.systemBars());
+        } else {
+            window.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_VISIBLE);
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        // 全屏时返回键是唯一的出口：预览上的触摸全给车机了，不能拿它当退出按钮
+        if (fullscreen) {
+            exitFullscreen();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // 从极核 App 授权完切回来时，系统栏会自己冒出来 —— 那会被一起录进去。
+        // 每次重新拿到焦点都再隐藏一次，这是沉浸式全屏的标准做法。
+        if (hasFocus && fullscreen) hideSystemBars();
     }
 
     /** 接好「CarLife 帧 → 本地 H.264 解码 → 预览位图」的通路。 */
