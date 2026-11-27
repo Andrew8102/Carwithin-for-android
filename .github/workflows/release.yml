@@ -6,6 +6,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0). Required for manual runs.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -49,9 +54,18 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk \
              "dist/carwithin-for-android-${GITHUB_REF_NAME}.apk"
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: dist/*.apk
+
+      # Tag pushes use the git tag; manual runs use the "tag" input.
       - name: Publish GitHub Release
+        if: ${{ github.ref_type == 'tag' || inputs.tag != '' }}
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           files: dist/*.apk
           generate_release_notes: true
           draft: false
