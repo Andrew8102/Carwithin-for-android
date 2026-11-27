@@ -6,6 +6,10 @@
 
 **目标：把安卓手机的屏幕，投到极核 AE4 MAX2+ 6.2 寸仪表上。**
 
+> **先读 [docs/RETHINK.md](docs/RETHINK.md)**：推倒重来后的第一性原理分析。
+> 真机反馈「连上 WiFi 也无法推流」后，之前「两条路并行、Plan A 只差实测」的判断已作废。
+> 核心结论：PXC 是拉流不是推流；六个断点从未取证；先抓包/拿日志，再改代码。
+
 [![Platform: Android 10+](https://img.shields.io/badge/Android-10%2B-blue)](#下载安装) [![Status: WIP 未完成](https://img.shields.io/badge/status-WIP%20%E6%9C%AA%E5%AE%8C%E6%88%90-red)](#当前状态) [![Release](https://img.shields.io/github/v/release/Andrew8102/Carwithin-for-android?label=release)](https://github.com/Andrew8102/Carwithin-for-android/releases/latest)
 
 预期链路是 手机录屏 → H.264 编码 → PXC/TCP → 仪表出画，另规划实验性 CarLife 直连、多车型调试参数、测试图与帧率统计。
