@@ -25,6 +25,28 @@ public final class ZeehoDiscovery {
     }
 
     /**
+     * 单点探测：这个地址的端口能不能连上。
+     *
+     * <p>比全段扫描快得多，用来验证「上次成功的地址」是否仍然有效。
+     */
+    public static boolean probe(String ip, int port, Network network, int timeoutMs) {
+        if (ip == null || ip.isEmpty()) return false;
+        try (Socket socket = new Socket()) {
+            if (network != null) {
+                try {
+                    network.bindSocket(socket);
+                } catch (Exception ignored) {
+                    // 绑不上就试默认路由
+                }
+            }
+            socket.connect(new InetSocketAddress(ip, port), timeoutMs);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
      * @param network 要钉住的网络；null 走默认路由。多网卡（p2p0 + wlan0）时必须给，
      *                否则探测包会从 wlan0 发出，扫不到 P2P 网段里的仪表。
      */

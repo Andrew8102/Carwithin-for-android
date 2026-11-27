@@ -1,53 +1,97 @@
 #!/usr/bin/env bash
-# CarWithin 真机调试助手（便携 adb，无需安装 Android SDK）
+# CarWithin 真机调试助手（便携 adb，Windows / macOS / Linux 通用）
 #
+#   ./scripts/adb-carlife.sh doctor               检查 adb / python / 设备是否就绪
 #   ./scripts/adb-carlife.sh wait                 等待设备并打印基本信息
 #   ./scripts/adb-carlife.sh inspect              拉出 Car+ 的 APK，列出全部 Activity 与 exported
 #   ./scripts/adb-carlife.sh ports                看 7 个 CarLife 端口是否在 LISTEN
 #   ./scripts/adb-carlife.sh try                  逐个 am start 疑似入口，观察端口命中
 #   ./scripts/adb-carlife.sh logs [秒数]          抓 logcat（默认 60 秒）
 #   ./scripts/adb-carlife.sh install [apk路径]    安装 debug 包
-#   ./scripts/adb-carlife.sh shot [文件名]        截图到 dist/
+#   ./scripts/adb-carlife.sh shot [文件名]        截图到 dist/shots/
 #   ./scripts/adb-carlife.sh dbg <命令> [秒数]    广播驱动 debug 包，不用手点屏幕
 #       命令：connect | connect-launch | testpattern | stop | state | diagnose
-#       例：./scripts/adb-carlife.sh dbg connect 15
+#             p2p-build | p2p-scan | join-hotspot | forget
+#   ./scripts/adb-carlife.sh hotspot <ssid> [psk] 写仪表热点凭据（psk 省略=开放网络）
 #   ./scripts/adb-carlife.sh fresh [秒数]         冷启动一把梭：杀 Car+/CarLife → 直连 → 盯日志
 #       Car+ 已在后台跑过时，CarLife 只会停在「OPPO 智行」启动页；必须先结束它。
 #
-# 环境变量：CAR_PKG（默认 com.oplus.ocar）、APP_PKG（默认 com.github.carwithinforandroid）
+# 环境变量：CAR_PKG（默认 com.oplus.ocar）、APP_PKG（默认 com.github.carwithinforandroid）、
+#           ADB_BIN（自定义 adb 路径）、PY（自定义 python）
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# adb 查找顺序：$ADB_BIN 显式指定 → 项目内 tools → 项目上一级 tools → PATH
+# adb 查找顺序：$ADB_BIN 显式指定 → 项目内 tools → 项目上一级 tools → 常见安装位置 → PATH
 find_adb() {
   local c
   for c in "${ADB_BIN:-}" \
+           "$ROOT/tools/platform-tools/adb" \
+           "$ROOT/../tools/platform-tools/adb" \
            "$ROOT/tools/platform-tools/adb.exe" \
            "$ROOT/../tools/platform-tools/adb.exe" \
+           "$HOME/Library/Android/sdk/platform-tools/adb" \
+           "$HOME/Android/Sdk/platform-tools/adb" \
+           "/opt/homebrew/bin/adb" \
+           "/usr/local/bin/adb" \
            "$(command -v adb 2>/dev/null)"; do
-    if [ -n "$c" ] && [ -x "$c" ]; then echo "$c"; return 0; fi
+    if [ -n "$c" ] && [ -x "$c" ] && [ ! -d "$c" ]; then echo "$c"; return 0; fi
   done
   return 1
 }
 ADB="$(find_adb)" || {
-  echo "找不到 adb。二选一："
-  echo "  A) 下载便携版：cd \"$ROOT/..\" && mkdir -p tools && cd tools && \\"
+  echo "找不到 adb。按系统二选一："
+  echo "  macOS   brew install android-platform-tools"
+  echo "  Linux   sudo apt install android-tools-adb"
+  echo "  Windows 下载便携版："
+  echo "     cd \"$ROOT/..\" && mkdir -p tools && cd tools && \\"
   echo "     curl -L -o pt.zip https://dl.google.com/android/repository/platform-tools-latest-windows.zip && unzip pt.zip"
-  echo "  B) 指定已有路径：ADB_BIN=/c/platform-tools/adb.exe $0 ..."
+  echo "  或指定已有路径：ADB_BIN=/path/to/adb $0 ..."
   exit 1
 }
 CAR_PKG="${CAR_PKG:-com.oplus.ocar}"
 APP_PKG="${APP_PKG:-com.github.carwithinforandroid}"
-PY="${PY:-python}"
+# macOS 只有 python3，Windows 上 python 也能是 py -3
+PY="${PY:-}"
+if [ -z "$PY" ]; then
+  for c in python3 python; do
+    if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
+  done
+fi
+PY="${PY:-python3}"
+
+# macOS 自带的 coreutils 里没有 timeout（装了 coreutils 才有 gtimeout）。
+TIMEOUT=""
+if command -v timeout >/dev/null 2>&1; then TIMEOUT=timeout
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT=gtimeout; fi
+
+# 有 timeout 就用；没有就自己掐表（macOS 默认走这条）
+run_timeout() {
+  local secs="$1"; shift
+  if [ -n "$TIMEOUT" ]; then
+    "$TIMEOUT" "$secs" "$@"
+    return $?
+  fi
+  "$@" &
+  local pid=$!
+  ( sleep "$secs"; kill -TERM "$pid" 2>/dev/null ) &
+  local watcher=$!
+  wait "$pid" 2>/dev/null
+  local rc=$?
+  kill -TERM "$watcher" 2>/dev/null
+  wait "$watcher" 2>/dev/null
+  return $rc
+}
+
 
 # CarLife 七端口（十进制 → /proc/net/tcp 里的十六进制）
 PORTS="7240 8240 9240 9241 9242 9340 9440"
 
 usage() {
   cat <<'EOF'
-CarWithin 真机调试助手（便携 adb，无需安装 Android SDK）
+CarWithin 真机调试助手（便携 adb，Windows / macOS / Linux 通用）
 
+  ./scripts/adb-carlife.sh doctor               检查 adb / python / 设备是否就绪
   ./scripts/adb-carlife.sh wait                 确认设备已连接并打印基本信息
   ./scripts/adb-carlife.sh inspect              拉出 Car+ 的 APK，列出全部 Activity 与 exported
   ./scripts/adb-carlife.sh ports                看 7 个 CarLife 端口是否在 LISTEN
@@ -57,15 +101,46 @@ CarWithin 真机调试助手（便携 adb，无需安装 Android SDK）
   ./scripts/adb-carlife.sh shot [文件名]        截图到 dist/shots/
   ./scripts/adb-carlife.sh dbg <命令> [秒数]    广播驱动 debug 包，不用手点屏幕
       命令：connect | connect-launch | testpattern | stop | state | diagnose
-      例：./scripts/adb-carlife.sh dbg connect 15
+            p2p-build | p2p-scan | join-hotspot | forget
+      例：./scripts/adb-carlife.sh dbg diagnose 10
+  ./scripts/adb-carlife.sh hotspot <ssid> [psk] 写仪表热点凭据（不填 psk = 开放网络）
   ./scripts/adb-carlife.sh fresh [秒数]         冷启动：结束 Car+/CarLife → 直连 → 盯日志
       为什么需要 fresh：Car+ 已在后台运行过时，重新连接只会停在
       「OPPO 智行 / 百度 CarLife+」启动页，必须让它冷启动才会进入车机桌面。
 
 环境变量：CAR_PKG（默认 com.oplus.ocar）、APP_PKG（默认 com.github.carwithinforandroid）、
-          ADB_BIN（自定义 adb 路径）
+          ADB_BIN（自定义 adb 路径）、PY（自定义 python）
 EOF
 }
+
+# 一次性把环境问题暴露出来 —— 换机器（比如从 Windows 搬到 Mac）第一件事就跑这个
+cmd_doctor() {
+  echo "== 环境 =="
+  echo "  OS        $(uname -s) $(uname -m)"
+  echo "  adb       $ADB"
+  echo "  adb 版本  $("$ADB" version 2>/dev/null | head -1 | tr -d '\r')"
+  echo "  python    $PY ($($PY -V 2>&1 | tr -d '\r'))"
+  echo "  timeout   ${TIMEOUT:-内置兜底（macOS 正常）}"
+  echo "  项目      $ROOT"
+  if [ -x "$ROOT/gradlew" ]; then
+    echo "  gradlew   可执行（本机可自行构建）"
+  else
+    echo "  gradlew   不可执行，可在 macOS 上执行 chmod +x gradlew"
+  fi
+  echo
+  echo "== 设备 =="
+  "$ADB" devices
+  echo
+  echo "  debug 包  $("$ADB" shell pm list packages "$APP_PKG" 2>/dev/null | tr -d '\r' | sed 's/^package://')"
+  echo "  Car+ 包   $("$ADB" shell pm list packages "$CAR_PKG" 2>/dev/null | tr -d '\r' | sed 's/^package://')"
+  echo
+  echo "== dist/ 里可安装的包 =="
+  ls -t "$ROOT"/dist/*.apk 2>/dev/null | head -5 | while read -r f; do
+    echo "  $(basename "$f")"
+  done
+  [ -d "$ROOT/dist" ] || echo "  （没有 dist/，从 GitHub Actions 的 artifact 里下载）"
+}
+
 
 require_device() {
   local n
@@ -86,7 +161,9 @@ cmd_wait() {
     echo "  1) 手机：设置 → 关于本机 → 连点「版本号」7 次，开启开发者选项"
     echo "  2) 开发者选项里打开「USB 调试」"
     echo "  3) 插线后手机上点「允许调试」，勾选「始终允许」"
-    timeout 60 "$ADB" wait-for-device 2>/dev/null
+    echo "  macOS 上如果完全没有设备：换一条数据线（很多充电线不带数据），"
+    echo "  或先执行 adb kill-server && adb devices 重新握手"
+    run_timeout 60 "$ADB" wait-for-device 2>/dev/null
   fi
   require_device
   echo
@@ -259,7 +336,14 @@ cmd_dbg() {
     stop)           action="STOP" ;;
     state)          action="STATE" ;;
     diagnose)       action="DIAGNOSE" ;;
-    *) echo "未知命令：$cmd（可用 connect / connect-launch / testpattern / stop / state / diagnose）"; return 1 ;;
+    p2p-build)      action="P2P_BUILD" ;;
+    p2p-scan)       action="P2P_SCAN" ;;
+    join-hotspot)   action="JOIN_HOTSPOT" ;;
+    forget)         action="FORGET" ;;
+    *) echo "未知命令：$cmd"
+       echo "可用：connect / connect-launch / testpattern / stop / state / diagnose /"
+       echo "      p2p-build / p2p-scan / join-hotspot / forget"
+       return 1 ;;
   esac
   "$ADB" logcat -c >/dev/null 2>&1
   echo "== 发送 DEBUG.$action =="
@@ -268,16 +352,32 @@ cmd_dbg() {
   "$ADB" shell am broadcast -a "com.github.carwithinforandroid.DEBUG.$action" \
     -p "$APP_PKG" -f 0x00000020 2>&1 | tr -d '\r' | head -2
   echo "== 观察 ${secs}s =="
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$secs" "$ADB" logcat -s CarWithin 2>/dev/null | tr -d '\r' | grep -v '^-----'
-  else
-    "$ADB" logcat -d -s CarWithin 2>/dev/null | tr -d '\r' | grep -v '^-----'; sleep "$secs"
-  fi
+  # adb logcat 的 -s 只按 tag 过滤，所以这里用 run_timeout 保证 mac 上也能自动收尾
+  run_timeout "$secs" "$ADB" logcat -s CarWithin 2>/dev/null | tr -d '\r' | grep -v '^-----'
   echo "== 端口 =="
   cmd_ports
 }
 
+# 写仪表热点凭据：CarWithin（iOS）里这是用户手填的 SSID/密码，
+# Android 上写一次就能让 WifiNetworkSpecifier 全自动连上，不再需要极核 App。
+cmd_hotspot() {
+  local ssid="${1:-}" psk="${2:-}"
+  if [ -z "$ssid" ]; then
+    echo "用法：$0 hotspot <SSID> [密码]     密码留空表示开放网络"
+    echo "  现场先看手机当前连的是哪个（极核 App 点过投屏后再看最准）："
+    echo "    $ADB shell dumpsys wifi | grep -i \"mWifiInfo\\|SSID\" | head -5"
+    return 1
+  fi
+  require_device
+  echo "写入热点 SSID=$ssid 密码长度=${#psk}"
+  "$ADB" shell am broadcast -a "com.github.carwithinforandroid.DEBUG.HOTSPOT" \
+    -p "$APP_PKG" -f 0x00000020 --es ssid "$ssid" --es psk "$psk" >/dev/null 2>&1
+  echo "已写入，验证中…"
+  run_timeout 4 "$ADB" logcat -s CarWithin 2>/dev/null | tr -d '\r' | grep -E "热点|HOTSPOT" | head -5
+}
+
 case "${1:-}" in
+  doctor) cmd_doctor ;;
   wait) cmd_wait ;;
   inspect) cmd_inspect ;;
   ports) cmd_ports ;;
@@ -285,6 +385,7 @@ case "${1:-}" in
   logs) shift; cmd_logs "${1:-60}" ;;
   install) shift; cmd_install "${1:-}" ;;
   shot) shift; cmd_shot "${1:-}" ;;
+  hotspot) shift; cmd_hotspot "${1:-}" "${2:-}" ;;
   dbg) shift; cmd_dbg "${1:-state}" "${2:-10}" ;;
   fresh) shift; cmd_fresh "${1:-30}" ;;
   *) usage ;;

@@ -13,6 +13,7 @@ import com.github.carwithinforandroid.launcher.CarAppLauncher;
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoNetwork;
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoP2p;
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoDiscovery;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoPrefs;
 
 /**
  * 仅 debug 包可用的命令行入口。
@@ -29,6 +30,9 @@ import com.github.carwithinforandroid.outputs.zeeho.ZeehoDiscovery;
  * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.TESTPATTERN
  * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.P2P_BUILD
  * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.P2P_SCAN
+ * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.HOTSPOT --es ssid "热点名" --es psk "密码"
+ * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.JOIN_HOTSPOT
+ * adb shell am broadcast -a com.github.carwithinforandroid.DEBUG.FORGET --es what target
  * </pre>
  *
  * <p>只有 debuggable 的包才响应，正式包直接忽略，避免留一个可被任意 App 触发的开关。
@@ -170,6 +174,64 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
                 }, "debug-p2p-scan").start();
                 break;
             }
+            case "HOTSPOT": {
+                // 写仪表热点凭据。CarWithin（iOS）就是靠用户手填这组东西连上的，
+                // Android 上用 WifiNetworkSpecifier 可以全自动，不需要极核 App。
+                String ssid = intent.getStringExtra("ssid");
+                String psk = intent.getStringExtra("psk");
+                if (ssid == null || ssid.trim().isEmpty()) {
+                    LogBus.log("[debug] 用法：--es ssid \"热点名\" --es psk \"密码\"（开放网络 psk 传空）");
+                    break;
+                }
+                ZeehoPrefs.saveHotspot(app, ssid, psk);
+                LogBus.log("[debug] 已保存仪表热点：" + ZeehoPrefs.describe(app));
+                LogBus.log("[debug] 之后启动投屏会自动先试这个热点；想立刻试发 JOIN_HOTSPOT");
+                break;
+            }
+            case "JOIN_HOTSPOT": {
+                new Thread(() -> {
+                    try {
+                        LogBus.log("[debug] ==== 加入仪表热点 ====");
+                        LogBus.log("[debug] 配置：" + ZeehoPrefs.describe(app));
+                        if (!ZeehoPrefs.hasHotspot(app)) {
+                            LogBus.log("[debug] 还没配热点，先用 HOTSPOT 命令写入 SSID/密码");
+                            return;
+                        }
+                        ZeehoP2p link = new ZeehoP2p(app);
+                        boolean ok = link.joinDashboardHotspot(ZeehoPrefs.hotspotSsid(app),
+                                ZeehoPrefs.hotspotPsk(app), null, 25_000);
+                        LogBus.log("[debug] 加入结果 " + (ok ? "成功" : "失败"));
+                        LogBus.log("[debug] 网卡 " + ZeehoNetwork.describe(app));
+                        if (!ok) return;
+                        String gw = ZeehoNetwork.guessGateway(app);
+                        ZeehoNetwork.Nic nic = ZeehoNetwork.best(app);
+                        LogBus.log("[debug] 网关猜测 " + gw + "，当前网卡 " + nic);
+                        if (nic != null) {
+                            boolean hit = gw != null && ZeehoDiscovery.probe(gw,
+                                    ZeehoDiscovery.DISCOVERY_PORT, nic.network, 1500);
+                            LogBus.log("[debug] 仪表 " + gw + ":" + ZeehoDiscovery.DISCOVERY_PORT
+                                    + " " + (hit ? "有响应 → 可以点投屏了" : "无响应（仪表没进投屏页？）"));
+                        }
+                    } catch (Throwable e) {
+                        LogBus.log("[debug] JOIN_HOTSPOT 异常：" + e);
+                    }
+                }, "debug-hotspot").start();
+                break;
+            }
+            case "FORGET": {
+                // 清掉记住的东西，回到「第一次连接」的状态
+                String what = intent.getStringExtra("what");
+                if ("hotspot".equalsIgnoreCase(what)) {
+                    ZeehoPrefs.clearHotspot(app);
+                } else if ("target".equalsIgnoreCase(what)) {
+                    ZeehoPrefs.clearLastTarget(app);
+                } else {
+                    ZeehoPrefs.clearHotspot(app);
+                    ZeehoPrefs.clearLastTarget(app);
+                }
+                LogBus.log("[debug] 已清除，当前：" + ZeehoPrefs.describe(app));
+                break;
+            }
             default:
                 LogBus.log("[debug] 未知命令：" + cmd);
                 break;
@@ -182,7 +244,9 @@ public final class DebugCommandReceiver extends BroadcastReceiver {
 
     /** 供调试文档引用的命令清单。 */
     public static String usage() {
-        return "am broadcast -a " + PREFIX + "{CARLIFE_CONNECT|CARLIFE_CONNECT_LAUNCH|TESTPATTERN|STOP|STATE|DIAGNOSE|P2P_BUILD|P2P_SCAN}"
-                + "  [--es pkg com.oplus.ocar]   (需要 debuggable 包, 当前 API " + Build.VERSION.SDK_INT + ")";
+        return "am broadcast -a " + PREFIX + "{CARLIFE_CONNECT|CARLIFE_CONNECT_LAUNCH|TESTPATTERN|STOP|STATE"
+                + "|DIAGNOSE|P2P_BUILD|P2P_SCAN|HOTSPOT|JOIN_HOTSPOT|FORGET}"
+                + "  [--es pkg com.oplus.ocar] [--es ssid ..] [--es psk ..] [--es what hotspot|target]"
+                + "   (需要 debuggable 包, 当前 API " + Build.VERSION.SDK_INT + ")";
     }
 }

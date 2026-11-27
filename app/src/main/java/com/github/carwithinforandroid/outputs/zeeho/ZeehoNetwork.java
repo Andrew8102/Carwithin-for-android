@@ -16,13 +16,15 @@ import java.util.List;
 /**
  * 选本机该用哪块网卡跟仪表说话。
  *
- * <p>极核手机端跟仪表是 <b>Wi-Fi Direct（P2P）</b>组网的：用户在极核 App 里点「投屏」，
+ * <p>极核手机端跟仪表常见是 <b>Wi-Fi Direct（P2P）</b>组网的：用户在极核 App 里点「投屏」，
  * 由 App 发起 P2P 连接，系统自动完成配对，所以主观上「连车机 Wi-Fi 是无感的」——
- * 它在系统设置里根本不是一个能手动选的热点。
+ * 它在系统设置里根本不是一个能手动选的热点。这种情况下连接建在 <b>p2p0</b> 上，
+ * 而 {@code WifiManager.getConnectionInfo()} 读的是 STA 接口（wlan0）。如果照它的 IP
+ * 去扫网段、去 bind，扫的是家里路由器，仪表永远「未发现」。
  *
- * <p>这意味着连接其实建在 <b>p2p0</b> 上，而 {@code WifiManager.getConnectionInfo()} 读的是
- * STA 接口（wlan0）。如果照它的 IP 去扫网段、去 bind，扫的是家里路由器，
- * 仪表永远「未发现」。所以这里改成枚举系统里所有 Network，优先取 p2p0。
+ * <p>但 iOS 参考实现 CarWithin 连组网代码都没有 —— 它要求用户「iPhone 加入仪表 Wi-Fi」，
+ * 而 iOS 不支持 Wi-Fi Direct，说明仪表在投屏页同时会开一个<b>普通热点</b>（AP 模式）。
+ * 因此两种网卡都要认：p2p0 优先，其次 wlan0。
  */
 public final class ZeehoNetwork {
 
@@ -139,6 +141,19 @@ public final class ZeehoNetwork {
             if (nic.name != null && nic.name.toLowerCase().startsWith("p2p")) return true;
         }
         return false;
+    }
+
+    /**
+     * 当前最优网段的网关地址（x.y.z.1）。
+     *
+     * <p>仪表当组主/热点时几乎总是网段第一个地址，CarWithin 的候选表里也把 .1 排在前面。
+     * 加入热点之后才调用才有意义 —— 加入之前算出来的是上一个网络（例如家里路由器）。
+     */
+    public static String guessGateway(Context context) {
+        Nic nic = best(context);
+        if (nic == null || nic.ip == null) return null;
+        int dot = nic.ip.lastIndexOf('.');
+        return dot < 0 ? null : nic.ip.substring(0, dot + 1) + "1";
     }
 
     /** 日志用：p2p0=192.168.49.1, wlan0=192.168.123.104 */

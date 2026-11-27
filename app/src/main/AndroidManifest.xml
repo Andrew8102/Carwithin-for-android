@@ -62,6 +62,9 @@
                 <!-- 新增命令必须在这里登记，否则 am broadcast 只会 Enqueued、不会投递 -->
                 <action android:name="com.github.carwithinforandroid.DEBUG.P2P_BUILD" />
                 <action android:name="com.github.carwithinforandroid.DEBUG.P2P_SCAN" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.HOTSPOT" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.JOIN_HOTSPOT" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.FORGET" />
             </intent-filter>
         </receiver>
     </application>

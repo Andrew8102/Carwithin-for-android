@@ -1,0 +1,14 @@
+# 换行符统一：仓库里所有脚本一律 LF。
+# 否则在 Windows 上提交、到 macOS 上执行会报
+#   /usr/bin/env: bash^M: bad interpreter
+# 这是跨机器调试最容易踩、又最难自己看出来的一个坑。
+* text=auto eol=lf
+
+*.sh    text eol=lf
+gradlew text eol=lf
+*.bat   text eol=crlf
+
+*.apk   binary
+*.jks   binary
+*.png   binary
+*.jar   binary

@@ -356,21 +356,42 @@ public final class ZeehoP2p implements Closeable {
     /**
      * 兜底：不走 P2P，直接用系统 API 加入仪表的普通 Wi-Fi 热点。
      *
+     * <p>这是 CarWithin（iOS）唯一的路子 —— 它没有组网代码，前提就是手机先加入仪表 Wi-Fi。
+     *
      * @param ssid     仪表热点名
-     * @param password 8 位以上密码
+     * @param password 密码；空串表示开放网络
      */
     public boolean joinDashboardHotspot(String ssid, String password, String assumedIp, long timeoutMs) {
-        if (ssid == null || ssid.trim().isEmpty() || password == null || password.length() < 8) {
-            LogBus.log("[p2p] 未配置仪表热点（SSID/密码），跳过");
+        if (ssid == null || ssid.trim().isEmpty()) {
+            LogBus.log("[hotspot] 未配置仪表热点（SSID），跳过");
+            return false;
+        }
+        String psk = password == null ? "" : password.trim();
+        if (!psk.isEmpty() && psk.length() < 8) {
+            LogBus.log("[hotspot] 密码少于 8 位，WPA2 不接受：" + psk.length());
             return false;
         }
         ConnectivityManager cm = (ConnectivityManager)
                 context.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm == null) return false;
-        WifiNetworkSpecifier specifier = new WifiNetworkSpecifier.Builder()
-                .setSsid(ssid.trim())
-                .setWpa2Passphrase(password)
-                .build();
+        // 上一次请求的 callback 必须先摘掉，否则每重连一次就在系统里留一个，
+        // 且新请求会跟旧网络互相抢 wlan0。
+        if (specifierCallback != null) {
+            try {
+                cm.unregisterNetworkCallback(specifierCallback);
+            } catch (Exception ignored) {
+                // 已经失效
+            }
+            specifierCallback = null;
+            specifierNetwork = null;
+        }
+        WifiNetworkSpecifier.Builder builder = new WifiNetworkSpecifier.Builder().setSsid(ssid.trim());
+        if (psk.isEmpty()) {
+            LogBus.log("[hotspot] 按开放网络加入 " + ssid);
+        } else {
+            builder.setWpa2Passphrase(psk);
+        }
+        WifiNetworkSpecifier specifier = builder.build();
         NetworkRequest request = new NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -384,13 +405,14 @@ public final class ZeehoP2p implements Closeable {
                 network = n;
                 groupFormed = true;
                 groupOwnerIp = assumedIp;
-                LogBus.log("[p2p] 已加入仪表热点 " + ssid + "，目标 " + assumedIp);
+                LogBus.log("[hotspot] 已加入仪表热点 " + ssid
+                        + (assumedIp == null ? "" : "，目标 " + assumedIp));
                 latch.countDown();
             }
 
             @Override
             public void onUnavailable() {
-                LogBus.log("[p2p] 找不到仪表热点 " + ssid);
+                LogBus.log("[hotspot] 找不到仪表热点 " + ssid);
                 latch.countDown();
             }
 
@@ -399,7 +421,7 @@ public final class ZeehoP2p implements Closeable {
                 if (n != null && n.equals(specifierNetwork)) {
                     specifierNetwork = null;
                     groupFormed = false;
-                    LogBus.log("[p2p] 仪表热点断开");
+                    LogBus.log("[hotspot] 仪表热点断开");
                 }
             }
         };
@@ -408,7 +430,7 @@ public final class ZeehoP2p implements Closeable {
             latch.await(timeoutMs, TimeUnit.MILLISECONDS);
             return specifierNetwork != null;
         } catch (Exception e) {
-            LogBus.log("[p2p] 请求热点失败：" + e.getMessage());
+            LogBus.log("[hotspot] 请求热点失败：" + e.getMessage());
             return false;
         }
     }
