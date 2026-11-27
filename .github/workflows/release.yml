@@ -1,14 +1,19 @@
 name: Release APK
 
-# Triggered by pushing a v* tag (e.g. v0.3.0) or manually from the Actions tab.
+# 三种触发方式：
+#   1. 推送 v* tag          -> 正式版 Release（用 tag 作为版本号）
+#   2. 推送 main            -> 开发预览版 prerelease（版本号 0.3.0-dev.<构建号>，滚动更新 dev-latest）
+#   3. 手动触发（可填 tag） -> 填了 tag 发正式版，留空则发预览版
 on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.3.0). Required for manual runs.'
+        description: 'Release tag (e.g. v0.3.0). Leave empty to build a dev preview.'
         required: false
         default: ''
 
@@ -21,6 +26,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # 需要完整 tag 历史，git describe 才能取到基线版本号。
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6
@@ -41,17 +49,43 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > release.jks
-            echo "已写入 release.jks"
+            echo "已写入 release.jks，将使用正式签名"
           else
-            echo "未配置 KEYSTORE_BASE64，将使用 debug 签名"
+            echo "::warning::未配置 KEYSTORE_BASE64，本次产物为 debug 签名"
           fi
 
-      - name: Resolve release tag for versioning
+      - name: Resolve version
         id: ver
         run: |
-          TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "使用版本 tag: ${TAG:-<空，回退默认版本>}"
+          set -eu
+          IS_RELEASE=false
+          TAG=""
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+            IS_RELEASE=true
+          elif [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+            IS_RELEASE=true
+          fi
+
+          if [ "$IS_RELEASE" = "true" ]; then
+            SUFFIX=""
+            OUT_NAME="carwithin-for-android-${TAG}.apk"
+          else
+            # 预览版基线取最近一个 tag，取不到就退回默认版本。
+            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.3.0")
+            SUFFIX="-dev.${{ github.run_number }}"
+            OUT_NAME="carwithin-for-android-dev.apk"
+          fi
+
+          {
+            echo "tag=$TAG"
+            echo "suffix=$SUFFIX"
+            echo "is_release=$IS_RELEASE"
+            echo "out_name=$OUT_NAME"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "基线: $TAG | 后缀: ${SUFFIX:-无} | 正式版: $IS_RELEASE | 文件名: $OUT_NAME"
 
       - name: Build release APK
         env:
@@ -60,40 +94,77 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEYSTORE_TYPE: ${{ secrets.KEYSTORE_TYPE || 'PKCS12' }}
           RELEASE_TAG: ${{ steps.ver.outputs.tag }}
+          VERSION_SUFFIX: ${{ steps.ver.outputs.suffix }}
         run: ./gradlew :app:assembleRelease --no-daemon
 
       # 把打进 APK 的真实版本号打到 CI 日志，方便核对 tag 与版本是否一致。
       - name: Show APK version
+        id: apk
         run: |
           META=app/build/outputs/apk/release/output-metadata.json
           if [ -f "$META" ]; then
             cat "$META"
+            VM=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['elements'][0]['versionName'])" "$META")
+            VC=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['elements'][0]['versionCode'])" "$META")
+            echo "version_name=$VM" >> "$GITHUB_OUTPUT"
+            echo "version_code=$VC" >> "$GITHUB_OUTPUT"
+            echo "打进 APK 的版本: $VM (versionCode $VC)"
           else
             echo "未找到 output-metadata.json"
+          fi
+
+      # 校验签名，确认用的是正式密钥而不是 debug 密钥。
+      - name: Verify APK signature
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -1)
+          if [ -n "$APKSIGNER" ]; then
+            "$APKSIGNER" verify --print-certs app/build/outputs/apk/release/app-release.apk | head -12
+          else
+            echo "未找到 apksigner，跳过签名校验"
           fi
 
       - name: Prepare artifact
         run: |
           mkdir -p dist
-          SUFFIX="${{ steps.ver.outputs.tag }}"
-          if [ -z "$SUFFIX" ]; then SUFFIX="$GITHUB_REF_NAME"; fi
-          cp app/build/outputs/apk/release/app-release.apk \
-             "dist/carwithin-for-android-${SUFFIX}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "dist/${{ steps.ver.outputs.out_name }}"
           ls -l dist
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
-          name: app-release
+          name: apk-${{ steps.ver.outputs.is_release == 'true' && steps.ver.outputs.tag || format('dev-{0}', github.run_number) }}
           path: dist/*.apk
 
-      # Tag pushes use the git tag; manual runs use the "tag" input.
-      - name: Publish GitHub Release
-        if: ${{ github.ref_type == 'tag' || inputs.tag != '' }}
+      # 正式版：tag 推送或手动指定 tag。
+      - name: Publish release
+        if: ${{ steps.ver.outputs.is_release == 'true' }}
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          tag_name: ${{ steps.ver.outputs.tag }}
           files: dist/*.apk
           generate_release_notes: true
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
+
+      # 预览版：main 每次推送，滚动更新同一个 dev-latest prerelease。
+      - name: Publish dev prerelease
+        if: ${{ steps.ver.outputs.is_release != 'true' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: dev-latest
+          name: 开发预览版 · 自动构建
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: dist/*.apk
+          body: |
+            main 分支自动构建，非正式发布，仅供尝鲜测试。
+
+            | 项目 | 值 |
+            | --- | --- |
+            | 版本 | `${{ steps.apk.outputs.version_name }}`（versionCode ${{ steps.apk.outputs.version_code }}） |
+            | 提交 | `${{ github.sha }}` |
+            | 构建号 | #${{ github.run_number }} |
+
+            > 与正式版使用同一套签名密钥（仓库已配置 Secrets 时），可直接覆盖安装；
+            > 未配置密钥时本包为 debug 签名，与正式版互相覆盖需先卸载。

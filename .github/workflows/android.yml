@@ -1,9 +1,10 @@
 name: Android build
 
+# main 的构建与发版统一由 release.yml 负责（会产出预览版 APK），
+# 这里只做 PR 校验和手动构建，避免每次推送重复跑两遍。
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   assemble:

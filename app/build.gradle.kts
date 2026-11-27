@@ -6,6 +6,9 @@ plugins {
  * 版本号从发布 tag 自动推导，避免每次手动改 build.gradle.kts 导致 APK 内版本号不变。
  * 优先级：RELEASE_TAG 环境变量（CI 打 tag 时注入） > git describe > 默认 0.3.0。
  * versionCode 由语义化版本计算：major*10000 + minor*100 + patch（0.3.0 -> 300）。
+ *
+ * 预览版（main 每次推送）额外注入 VERSION_SUFFIX，如 "-dev.42"，得到 0.3.0-dev.42；
+ * versionCode 与同基线正式版保持一致，保证预览版与正式版可以互相覆盖安装。
  */
 data class AppVersion(val name: String, val code: Int)
 
@@ -25,11 +28,12 @@ fun resolveVersion(): AppVersion {
 
     val clean = raw.trim().removePrefix("v").substringBefore("-")
     val parts = clean.split(".").mapNotNull { it.toIntOrNull() }
-    if (parts.isEmpty()) return AppVersion(clean.ifBlank { "0.3.0" }, 300)
+    val suffix = System.getenv("VERSION_SUFFIX")?.trim()?.takeIf { it.isNotBlank() } ?: ""
+    if (parts.isEmpty()) return AppVersion(clean.ifBlank { "0.3.0" } + suffix, 300)
     val major = parts.getOrElse(0) { 0 }
     val minor = parts.getOrElse(1) { 0 }
     val patch = parts.getOrElse(2) { 0 }
-    return AppVersion("$major.$minor.$patch", major * 10000 + minor * 100 + patch)
+    return AppVersion("$major.$minor.$patch$suffix", major * 10000 + minor * 100 + patch)
 }
 
 val appVersion = resolveVersion()
