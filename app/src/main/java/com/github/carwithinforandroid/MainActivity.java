@@ -2,13 +2,14 @@ package com.github.carwithinforandroid;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -26,14 +27,18 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.github.carwithinforandroid.core.CastSession;
+import com.github.carwithinforandroid.core.CrashGuard;
 import com.github.carwithinforandroid.core.FrameStats;
 import com.github.carwithinforandroid.core.LogBus;
 import com.github.carwithinforandroid.core.VehicleProfile;
 import com.github.carwithinforandroid.launcher.CarAppLauncher;
 import com.github.carwithinforandroid.sources.screen.TestPatternSource;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -91,6 +96,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // 先装崩溃兜底，再回放上次崩溃堆栈（方便无 adb 时把日志复制回传）。
+        CrashGuard.install(this);
+        CrashGuard.restoreLastCrash(this);
         session.configure(this);
 
         ScrollView scroll = new ScrollView(this);
@@ -169,11 +177,11 @@ public class MainActivity extends Activity {
         LinearLayout btnRow = new LinearLayout(this);
         btnRow.setOrientation(LinearLayout.HORIZONTAL);
         Button launchBtn = button("拉起界面", "#6366F1");
-        launchBtn.setOnClickListener(v -> doLaunch());
+        launchBtn.setOnClickListener(safe("拉起界面", this::doLaunch));
         Button diagBtn = button("诊断", "#0EA5E9");
-        diagBtn.setOnClickListener(v -> doDiagnose());
+        diagBtn.setOnClickListener(safe("诊断", this::doDiagnose));
         Button detectBtn = button("检测安装", "#475569");
-        detectBtn.setOnClickListener(v -> detectInstalled());
+        detectBtn.setOnClickListener(safe("检测安装", this::detectInstalled));
         launchBtn.setLayoutParams(rowParams());
         diagBtn.setLayoutParams(rowParams());
         detectBtn.setLayoutParams(rowParams());
@@ -193,8 +201,13 @@ public class MainActivity extends Activity {
         autoLaunchCheck.setTextColor(Color.parseColor(TEXT));
         autoLaunchCheck.setTextSize(12f);
         autoLaunchCheck.setChecked(VehicleProfile.autoLaunch(this));
-        autoLaunchCheck.setOnCheckedChangeListener((buttonView, isChecked) ->
-                VehicleProfile.setAutoLaunch(this, isChecked));
+        autoLaunchCheck.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            try {
+                VehicleProfile.setAutoLaunch(this, isChecked);
+            } catch (Throwable e) {
+                report("保存自动拉起设置", e);
+            }
+        });
         card.addView(autoLaunchCheck);
 
         root.addView(card);
@@ -214,7 +227,51 @@ public class MainActivity extends Activity {
             pkg = VehicleProfile.launchPackage(this);
             packageInput.setText(pkg);
         }
-        launchResult.setText(CarAppLauncher.diagnose(this, pkg, activity));
+        final String pkgFinal = pkg;
+        final String activityFinal = activity;
+        final Context app = getApplicationContext();
+        launchResult.setText("诊断中，正在探测本机 7 个端口（最多约 3 秒）…");
+        // 端口探测是阻塞式 Socket 连接，绝不能放在主线程，否则抛 NetworkOnMainThreadException 直接闪退。
+        new Thread(() -> {
+            String text;
+            try {
+                text = CarAppLauncher.diagnose(app, pkgFinal, activityFinal);
+            } catch (Throwable e) {
+                StringWriter writer = new StringWriter();
+                e.printStackTrace(new PrintWriter(writer));
+                text = "诊断失败：" + e + "\n\n" + writer;
+                LogBus.log("诊断失败：" + e.getClass().getSimpleName() + " " + e.getMessage());
+            }
+            final String out = text;
+            runOnUiThread(() -> launchResult.setText(out));
+        }, "diagnose").start();
+    }
+
+    /** 包装点击事件：任何异常都记录并在界面提示，避免直接闪退。 */
+    private View.OnClickListener safe(String label, Runnable action) {
+        return v -> {
+            try {
+                action.run();
+            } catch (Throwable e) {
+                report(label, e);
+            }
+        };
+    }
+
+    private void report(String label, Throwable e) {
+        LogBus.log(label + " 出错：" + e.getClass().getSimpleName() + " " + e.getMessage());
+        StringWriter writer = new StringWriter();
+        e.printStackTrace(new PrintWriter(writer));
+        String[] lines = writer.toString().split("\n");
+        for (int i = 0; i < Math.min(lines.length, 8); i++) {
+            LogBus.log(lines[i]);
+        }
+        try {
+            Toast.makeText(this, label + " 出错：" + e.getClass().getSimpleName()
+                    + "（详情见下方运行日志）", Toast.LENGTH_LONG).show();
+        } catch (Throwable ignored) {
+        }
+        render();
     }
 
     private LinearLayout.LayoutParams rowParams() {
@@ -243,31 +300,31 @@ public class MainActivity extends Activity {
         LinearLayout card = card("② 投屏控制");
 
         startButton = button("开始投屏（录屏）", "#0EA5E9");
-        startButton.setOnClickListener(v -> {
+        startButton.setOnClickListener(safe("开始投屏", () -> {
             if (VehicleProfile.autoLaunch(this)) {
                 doLaunch();
             }
             requestCastPermission();
-        });
+        }));
         card.addView(startButton);
 
         carlifeButton = button("CarLife 直连（实验·需 Car+ 进入车机模式）", "#14B8A6");
-        carlifeButton.setOnClickListener(v -> {
+        carlifeButton.setOnClickListener(safe("CarLife 投屏", () -> {
             if (VehicleProfile.autoLaunch(this)) {
                 doLaunch();
             }
             session.startCarLife(this, null);
-        });
+        }));
         card.addView(carlifeButton);
 
         testButton = button("用测试图验证出画（无需录屏授权）", "#8B5CF6");
-        testButton.setOnClickListener(v -> session.startTest(this, null));
+        testButton.setOnClickListener(safe("测试图投屏", () -> session.startTest(this, null)));
         card.addView(testButton);
 
         stopButton = button("停止投屏", "#475569");
         stopButton.setEnabled(false);
-        stopButton.setOnClickListener(v -> stopService(
-                new Intent(this, CastService.class).setAction(CastService.ACTION_STOP)));
+        stopButton.setOnClickListener(safe("停止投屏", () -> stopService(
+                new Intent(this, CastService.class).setAction(CastService.ACTION_STOP))));
         card.addView(stopButton);
 
         TextView hint = new TextView(this);
@@ -382,7 +439,7 @@ public class MainActivity extends Activity {
         card.addView(patternSpinner);
 
         Button saveBtn = button("保存配置（下次投屏生效）", "#0D9488");
-        saveBtn.setOnClickListener(v -> saveConfig());
+        saveBtn.setOnClickListener(safe("保存配置", this::saveConfig));
         card.addView(saveBtn);
 
         TextView warn = new TextView(this);
@@ -445,8 +502,43 @@ public class MainActivity extends Activity {
         logValue.setTypeface(Typeface.MONOSPACE);
         logValue.setTextColor(Color.parseColor(MUTED));
         logValue.setPadding(0, dp(4), 0, 0);
+        logValue.setTextIsSelectable(true);
         card.addView(logValue);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        Button copyBtn = button("复制日志", "#0EA5E9");
+        copyBtn.setOnClickListener(safe("复制日志", this::copyLog));
+        Button clearBtn = button("清空日志", "#475569");
+        clearBtn.setOnClickListener(safe("清空日志", this::clearLog));
+        copyBtn.setLayoutParams(rowParams());
+        clearBtn.setLayoutParams(rowParams());
+        row.addView(copyBtn);
+        row.addView(clearBtn);
+        card.addView(row);
         root.addView(card);
+    }
+
+    /** 把运行日志复制到剪贴板，方便没有 adb 时把崩溃信息发回。 */
+    private void copyLog() {
+        StringBuilder sb = new StringBuilder();
+        for (String line : LogBus.lines()) {
+            sb.append(line).append('\n');
+        }
+        ClipboardManager manager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (manager == null) {
+            Toast.makeText(this, "当前系统不支持剪贴板", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        manager.setPrimaryClip(ClipData.newPlainText("CarWithin 日志", sb.toString()));
+        Toast.makeText(this, "已复制 " + LogBus.lines().size() + " 行日志", Toast.LENGTH_SHORT).show();
+    }
+
+    private void clearLog() {
+        LogBus.clear();
+        CrashGuard.clearLastCrash(this);
+        render();
+        Toast.makeText(this, "日志已清空", Toast.LENGTH_SHORT).show();
     }
 
     private void addFooter(LinearLayout root) {
@@ -485,10 +577,12 @@ public class MainActivity extends Activity {
             LogBus.log("系统不支持屏幕采集");
             return;
         }
-        Intent intent = new Intent(this, CastService.class).setAction(CastService.ACTION_START);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent);
-        else startService(intent);
-        startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CAST_PERMISSION);
+        // 只弹录屏授权；前台服务要等拿到令牌后再启动（Android 14 的顺序要求）。
+        try {
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CAST_PERMISSION);
+        } catch (Throwable e) {
+            report("请求录屏授权", e);
+        }
     }
 
     @Override
@@ -497,16 +591,22 @@ public class MainActivity extends Activity {
         if (requestCode != REQUEST_CAST_PERMISSION) return;
         if (resultCode != RESULT_OK || data == null) {
             LogBus.log("用户取消录屏授权");
-            stopService(new Intent(this, CastService.class).setAction(CastService.ACTION_STOP));
+            render();
             return;
         }
-        MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        if (manager == null) return;
-        MediaProjection projection = manager.getMediaProjection(resultCode, data);
-        Intent service = new Intent(this, CastService.class).setAction(CastService.ACTION_START);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service);
-        else startService(service);
-        session.start(this, projection, null);
+        try {
+            // 录屏令牌交给前台服务：Android 14+ 必须先启动 mediaProjection 类型前台服务，
+            // 再调用 getMediaProjection()，顺序在 CastService 内部保证。
+            Intent service = new Intent(this, CastService.class)
+                    .setAction(CastService.ACTION_START)
+                    .putExtra(CastService.EXTRA_RESULT_CODE, resultCode)
+                    .putExtra(CastService.EXTRA_RESULT_DATA, data);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service);
+            else startService(service);
+            LogBus.log("已提交录屏授权，正在启动前台服务");
+        } catch (Throwable e) {
+            report("启动录屏服务", e);
+        }
         render();
     }
 
