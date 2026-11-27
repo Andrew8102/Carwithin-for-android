@@ -79,6 +79,11 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<VehicleProfile> profiles = VehicleProfile.presets();
 
+    /** 置顶向导：告诉用户「现在该点哪个」，避免 21 个按钮把人淹没。 */
+    private TextView guideText;
+    /** 高级调试区，默认折叠。 */
+    private LinearLayout advancedContainer;
+
     private TextView stateValue;
     private TextView stateHint;
     private TextView detailValue;
@@ -147,14 +152,33 @@ public class MainActivity extends Activity {
         scroll.addView(root, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        // 先建折叠容器再建向导卡：向导里「直推」按钮会展开它。
+        advancedContainer = new LinearLayout(this);
+        advancedContainer.setOrientation(LinearLayout.VERTICAL);
+        advancedContainer.setVisibility(View.GONE);
+
+        // 首页只放「怎么投屏」+「实时状态」+「本地预览」——用户进来就知道点哪个。
+        // 端口、扫码、热点、日志等 18 个调试按钮收进下面的高级区，默认不显示。
         addHeader(root);
-        addLaunchCard(root);
-        addControlCard(root);
+        addGuideCard(root);
         addStatusCard(root);
         addPreviewCard(root);
-        addStatsCard(root);
-        addVehicleCard(root);
-        addLogCard(root);
+
+        addLaunchCard(advancedContainer);
+        addControlCard(advancedContainer);
+        addStatsCard(advancedContainer);
+        addVehicleCard(advancedContainer);
+        addLogCard(advancedContainer);
+        root.addView(advancedContainer);
+
+        final Button advancedBtn = button("展开高级调试（端口 / 扫码 / 热点 / 日志）", "#475569");
+        advancedBtn.setOnClickListener(safe("展开高级调试", () -> {
+            boolean show = advancedContainer.getVisibility() != View.VISIBLE;
+            advancedContainer.setVisibility(show ? View.VISIBLE : View.GONE);
+            advancedBtn.setText(show ? "收起高级调试" : "展开高级调试（端口 / 扫码 / 热点 / 日志）");
+        }));
+        root.addView(advancedBtn);
+
         addFooter(root);
         contentScroll = scroll;
         setContentView(scroll);
@@ -200,6 +224,60 @@ public class MainActivity extends Activity {
         desc.setTextColor(Color.parseColor(MUTED));
         desc.setPadding(0, dp(5), 0, dp(10));
         root.addView(desc);
+    }
+
+    /* ---------------- 置顶向导：只回答「现在该点哪个」 ---------------- */
+
+    private void addGuideCard(LinearLayout root) {
+        LinearLayout card = card("怎么投屏？按这两步走");
+
+        guideText = new TextView(this);
+        guideText.setTextSize(13f);
+        guideText.setTextColor(Color.parseColor(ACCENT));
+        guideText.setLineSpacing(0, 1.4f);
+        guideText.setText("第 1 步  点「①」，等到下面预览里出现 Car+ 车机桌面。\n"
+                + "第 2 步  点「②镜像」，切到极核 App 点投屏 → 授权后立刻切回来。\n"
+                + "这条是唯一真机出过画的路。「直推」还没跑通，别在上面耗时间。");
+        card.addView(guideText);
+
+        Button step1 = button("① 一键拿到 Car+ 画面", "#F59E0B");
+        step1.setOnClickListener(safe("拿本地画面", () -> {
+            guideText.setText("正在进行：后台连接 Car+ 的 7 个端口…\n"
+                    + "看下面「实时状态」和「本地预览」。出现车机桌面再走第 2 步。");
+            startCarlifeWithLaunch();
+        }, false));
+        card.addView(step1);
+
+        Button step2 = button("② 镜像投屏（已跑通，推荐）", "#14B8A6");
+        step2.setOnClickListener(safe("镜像投屏", () -> {
+            if (!session.isActive()) {
+                guideText.setText("还没有本地画面。先点「①」，等预览出现车机桌面再回来。");
+                Toast.makeText(this, "先点①拿到画面，再点②", Toast.LENGTH_LONG).show();
+                return;
+            }
+            enterFullscreen();
+            guideText.setText("已全屏。现在切到极核 App → 点「投屏」→ 选镜像 → 授权后立刻切回本页。\n"
+                    + "返回键退出全屏。慢一秒就会录到极核 App 自己。");
+        }, false));
+        card.addView(step2);
+
+        Button step3 = button("② 直推仪表（实验性，未跑通）", "#64748B");
+        step3.setOnClickListener(safe("直推说明", () -> {
+            advancedContainer.setVisibility(View.VISIBLE);
+            guideText.setText("直推目前没跑通：需要抓包取证。\n"
+                    + "已展开高级区，依次用「扫仪表二维码」→「加入仪表热点」→「重连仪表」，\n"
+                    + "把「运行日志」发我，才能定位断在哪一步。");
+        }, false));
+        card.addView(step3);
+
+        TextView tip = new TextView(this);
+        tip.setText("每个按钮点了都会立刻提示；详细过程见「实时状态」，高级区里有完整日志。");
+        tip.setTextSize(11f);
+        tip.setTextColor(Color.parseColor(MUTED));
+        tip.setPadding(0, dp(8), 0, 0);
+        card.addView(tip);
+
+        root.addView(card);
     }
 
     /* ---------------- 车机界面启动卡 ---------------- */
@@ -487,9 +565,29 @@ public class MainActivity extends Activity {
 
     /** 包装点击事件：任何异常都记录并在界面提示，避免直接闪退。 */
     private View.OnClickListener safe(String label, Runnable action) {
+        return safe(label, action, true);
+    }
+
+    /**
+     * 按钮统一反馈。之前只有出错才 Toast，正常路径只往页面最底部的日志写一行，
+     * 用户点完完全看不到反应，以为按钮坏了。现在每次点击都会：
+     * ① 按钮文字短暂变成「✓ …」；② Toast 一句「已执行 …」。
+     *
+     * @param autoFeedback 传 false 表示 action 自己已经给了更确切的提示，避免两条 Toast 打架。
+     */
+    private View.OnClickListener safe(String label, Runnable action, boolean autoFeedback) {
         return v -> {
             try {
                 action.run();
+                if (v instanceof Button) {
+                    Button b = (Button) v;
+                    CharSequence original = b.getText();
+                    b.setText("✓ " + label);
+                    b.postDelayed(() -> b.setText(original), 1200);
+                }
+                if (autoFeedback) {
+                    Toast.makeText(this, "已执行：" + label, Toast.LENGTH_SHORT).show();
+                }
             } catch (Throwable e) {
                 report(label, e);
             }
