@@ -43,10 +43,15 @@ import com.github.carwithinforandroid.core.VehicleProfile;
 import com.github.carwithinforandroid.core.VideoFrame;
 import com.github.carwithinforandroid.launcher.CarAppLauncher;
 import com.github.carwithinforandroid.media.H264Decoder;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoConnection;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoDiscovery;
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoNetwork;
 import com.github.carwithinforandroid.outputs.zeeho.ZeehoP2p;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoPrefs;
+import com.github.carwithinforandroid.outputs.zeeho.ZeehoQr;
 import com.github.carwithinforandroid.sources.screen.TestPatternSource;
 import com.github.carwithinforandroid.ui.PreviewView;
+import com.github.carwithinforandroid.ui.ScanActivity;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -68,6 +73,7 @@ public class MainActivity extends Activity {
 
     private static final int REQUEST_CAST_PERMISSION = 1001;
     private static final int REQUEST_NOTIFICATION = 1002;
+    private static final int REQUEST_SCAN_QR = 1003;
 
     private final CastSession session = CastSession.get();
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -572,6 +578,11 @@ public class MainActivity extends Activity {
         }));
         card.addView(p2pScanBtn);
 
+        // 用扫码/adb 存好的凭据加入仪表普通热点（不是 P2P）—— CarWithin iOS 走的就是这条。
+        Button joinHotspotBtn = button("加入仪表热点（用已存的热点名/密码）", "#0891B2");
+        joinHotspotBtn.setOnClickListener(safe("加入热点", this::joinSavedHotspot));
+        card.addView(joinHotspotBtn);
+
         stopButton = button("停止投屏", "#475569");
         stopButton.setEnabled(false);
         stopButton.setOnClickListener(safe("停止投屏", () -> stopService(
@@ -876,6 +887,19 @@ public class MainActivity extends Activity {
         card.addView(discoveryPortInput);
         card.addView(targetIpInput);
 
+        // 扫仪表投屏页的二维码，直接读出 ssid/pwd/mac，省得现场手抄。
+        Button scanBtn = button("扫仪表二维码（自动填热点）", "#0369A1");
+        scanBtn.setOnClickListener(safe("扫码", this::startScan));
+        card.addView(scanBtn);
+
+        TextView scanTip = new TextView(this);
+        scanTip.setText("二维码在仪表投屏页，扫出来是极核的下载页链接，"
+                + "里面带 ssid/pwd。识别后会自动填好并提示是否连热点。");
+        scanTip.setTextSize(10f);
+        scanTip.setTextColor(Color.parseColor(MUTED));
+        scanTip.setPadding(0, dp(4), 0, 0);
+        card.addView(scanTip);
+
         int selected = 0;
         for (int i = 0; i < profiles.size(); i++) {
             if (profiles.get(i).id.equals(session.profile().id)) selected = i;
@@ -1058,6 +1082,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SCAN_QR) {
+            onScanResult(resultCode, data);
+            return;
+        }
         if (requestCode != REQUEST_CAST_PERMISSION) return;
         if (resultCode != RESULT_OK || data == null) {
             LogBus.log("用户取消录屏授权");
@@ -1078,6 +1106,70 @@ public class MainActivity extends Activity {
             report("启动录屏服务", e);
         }
         render();
+    }
+
+    /** 用已保存的热点凭据加入仪表网络；阻塞式 API 丢后台线程。 */
+    private void joinSavedHotspot() {
+        if (!ZeehoPrefs.hasHotspot(this)) {
+            Toast.makeText(this, "还没有热点凭据，先扫二维码或用 adb hotspot 命令写入",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        final Context app = getApplicationContext();
+        new Thread(() -> {
+            try {
+                LogBus.log("[hotspot] 加入仪表热点 " + ZeehoPrefs.hotspotSsid(app) + " …");
+                ZeehoP2p link = new ZeehoP2p(app);
+                boolean ok = link.joinDashboardHotspot(ZeehoPrefs.hotspotSsid(app),
+                        ZeehoPrefs.hotspotPsk(app), null, 25_000);
+                LogBus.log("[hotspot] 加入结果 " + (ok ? "成功" : "失败"));
+                if (ok) {
+                    String gw = ZeehoNetwork.guessGateway(app);
+                    ZeehoNetwork.Nic nic = ZeehoNetwork.best(app);
+                    LogBus.log("[hotspot] 网关 " + gw + "，当前网卡 " + nic);
+                    if (gw != null && nic != null) {
+                        boolean hit = ZeehoDiscovery.probe(gw,
+                                ZeehoConnection.DEFAULT_DISCOVERY_PORT, nic.network, 1500);
+                        LogBus.log("[hotspot] 仪表 " + gw + " 探针 " + (hit ? "有响应 ✅" : "无响应（仪表没进投屏页？）"));
+                    }
+                }
+                runOnUiThread(() -> Toast.makeText(this,
+                        ok ? "已加入仪表热点，看日志里的网关探针结果" : "加入失败，看日志",
+                        Toast.LENGTH_LONG).show());
+            } catch (Throwable e) {
+                LogBus.log("[hotspot] 异常 " + e);
+            }
+        }, "join-hotspot-ui").start();
+    }
+
+    /** 打开扫码页。相机权限由 ScanActivity 自己申请。 */
+    private void startScan() {
+        try {
+            startActivityForResult(new Intent(this, ScanActivity.class), REQUEST_SCAN_QR);
+        } catch (Throwable e) {
+            report("打开扫码", e);
+        }
+    }
+
+    /** 扫码回来：解析热点凭据 → 存入配置 → 提示是否立刻连。 */
+    private void onScanResult(int resultCode, Intent data) {
+        if (resultCode != RESULT_OK || data == null) return;
+        String raw = data.getStringExtra(ScanActivity.EXTRA_QR);
+        ZeehoQr.Result qr = ZeehoQr.parse(raw);
+        if (qr == null || !qr.hasCredentials()) {
+            Toast.makeText(this, "二维码能识别，但不是仪表热点链接", Toast.LENGTH_LONG).show();
+            LogBus.log("[扫码] 不是极核热点二维码：" + (raw == null ? "空" : raw.substring(0, Math.min(120, raw.length()))));
+            return;
+        }
+        // 密码 ~/.android 之类的地方不要打 logcat，只打长度和 MAC
+        ZeehoPrefs.saveHotspot(this, qr.ssid, qr.password);
+        LogBus.log("[扫码] 已读取热点凭据：" + qr.describe());
+        Toast.makeText(this,
+                "已读到热点 " + qr.ssid + "\n" + (qr.password == null ? "开放网络" : "密码 " + qr.password.length() + " 位")
+                        + "，已保存。点「加入仪表热点」即可连",
+                Toast.LENGTH_LONG).show();
+        // 更新状态卡的配置摘要（如果已经渲染过）
+        if (stateHint != null) render();
     }
 
     @Override

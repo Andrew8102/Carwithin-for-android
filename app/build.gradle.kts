@@ -111,3 +111,9 @@ android {
         checkReleaseBuilds = false
     }
 }
+
+dependencies {
+    // 纯 Java 二维码解码，不依赖 GMS/Play 服务，离线可用 —— 现场扫仪表二维码用。
+    // 只取 core（无 zxing-android 的 Activity/相机封装），相机预览自己写，体积小。
+    implementation("com.google.zxing:core:3.5.3")
+}
