@@ -24,14 +24,14 @@ import java.util.Locale;
 /**
  * 车机互联界面启动器 + 诊断。
  *
- * <p>重要前提：OPPO Car+（com.oplus.ocar）是手机端 CarLife（MD），
- * 只有当它连上支持 ICCOA / 百度 CarLife+ / 亿连的<strong>车机端（HU）</strong>时，
- * 才会进入 CarLife 模式并让 7 个端口在 127.0.0.1 监听。极核 AE4 MAX2+ 是私有 PXC
- * 协议仪表，不是 CarLife 车机，因此<strong>本 App 无法凭空让 Car+ 配对</strong>。
+ * <p>OPPO Car+（com.oplus.ocar）是手机端 CarLife（MD）。实测本项目已能让它在本机
+ * 127.0.0.1 打开 7 个端口（说明 HU 确实可以由同一台手机内的 App 扮演），但<b>窗口期极短</b>：
+ * Car+ 拉起后端口开一下就因无人连入而关闭。因此正确顺序是「先让 CarLifeLink 在端口上等，
+ * 再去拉起 Car+」，而不是「先拉起、再手动点直连」。
  *
- * <p>本类提供：① 拉起 Car+ 的入口（部分 ColorOS 版本可直接进 CarLife 模式）；
- * ② 诊断 Car+ 是否安装、版本、可拉起组件；③ 探测 7 端口确认 CarLife 组件是否真的在监听。
- * 若诊断显示 Car+ 未进入 CarLife 模式，请改用「录屏投屏」——它不依赖任何车机配对。
+ * <p>本类提供：① 拉起 Car+ 入口（{@link #launch}）；② 诊断安装/组件/端口（{@link #diagnose}）；
+ * ③ 枚举全部 Activity 并逐个试探（{@link #tryEnterCarlife}）；④ 挑出最可能的入口
+ * （{@link #bestCandidate}）供一键流程使用。
  */
 public final class CarAppLauncher {
 
@@ -328,6 +328,18 @@ public final class CarAppLauncher {
         return n;
     }
 
+    /**
+     * 挑出最可能的 CarLife 入口：疑似、已导出、已启用，按枚举顺序取第一个。
+     *
+     * @return Activity 全名；没有合适候选时返回 null
+     */
+    public static String bestCandidate(Context context, String packageName) {
+        for (ActivityEntry e : activities(context, packageName)) {
+            if (e.likelyCarLife && e.exported && e.enabled) return e.name;
+        }
+        return null;
+    }
+
     /** 进度回调（在调用线程触发，UI 侧需自行切主线程）。 */
     public interface Progress {
         void onProgress(String text);
@@ -396,15 +408,17 @@ public final class CarAppLauncher {
                     .append(" → ").append(open).append("/7 端口\n");
             if (progress != null) progress.onProgress(sb.toString());
             if (hit) {
-                sb.append("成功：Car+ 已进入 CarLife 模式，现在可以点「CarLife 直连」投屏。\n");
-                LogBus.log("Car+ 已进入 CarLife 模式（由 " + e.name + " 拉起）");
+                sb.append("成功：Car+ 已进入 CarLife 模式，7 个端口已监听。\n")
+                        .append("注意：这个窗口只有一两秒，本方法的探测连接会打断它。\n")
+                        .append("要真正收流，请回②点「一键：拉起 Car+ 并直连」——它先等端口再拉起。\n");
+                LogBus.log("Car+ 已进入 CarLife 模式（由 " + e.name + " 拉起，7/7 端口）");
                 return sb.toString();
             }
         }
 
-        sb.append("\n未命中。说明这些入口都不能单独把 Car+ 拉进 CarLife 模式——\n")
-                .append("Car+ 大概率还需要车机侧参与发现/配对（或需要系统级权限的 Intent）。\n")
-                .append("可点「枚举组件」查看全量列表，把可疑类名填进 Activity 输入框再试。\n");
+        sb.append("\n未命中。可能这些入口都不能单独把 Car+ 拉进 CarLife 模式，\n")
+                .append("也可能端口开了又立刻关，而本轮没踩上。可点「枚举组件」看全量列表，\n")
+                .append("把可疑类名填进 Activity 输入框后，用②的「一键：拉起 Car+ 并直连」再试。\n");
         return sb.toString();
     }
 

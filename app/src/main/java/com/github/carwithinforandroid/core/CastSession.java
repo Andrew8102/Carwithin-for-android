@@ -153,6 +153,11 @@ public final class CastSession {
         return "来源 " + source + "  ·  输出 " + output.status() + target;
     }
 
+    /** 采集源自己的阶段文本（不受引擎状态覆盖），用于判断 CarLife 是否已连上。 */
+    public String sourcePhase() {
+        return currentSource == null ? "" : currentSource.status();
+    }
+
     private void notifyChanged() {
         Listener current = listener;
         if (current != null) {

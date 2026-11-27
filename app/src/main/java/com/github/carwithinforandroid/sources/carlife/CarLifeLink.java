@@ -266,9 +266,10 @@ public final class CarLifeLink {
                 }
             } catch (ConnectException e) {
                 closeSockets();
-                if (attempt == 1 || attempt % 5 == 0) {
-                    state("等待手机端监听（第 " + attempt + " 次尝试）");
-                    d("端口未监听，重试中：第 " + attempt + " 次");
+                if (attempt == 1 || attempt % 10 == 0) {
+                    long waited = (deadlineMs - (deadline - System.nanoTime()) / 1_000_000L) / 1000L;
+                    state("等待手机端监听（第 " + attempt + " 次，" + waited + "s）");
+                    d("端口未监听，等待中：第 " + attempt + " 次，" + waited + "s");
                 }
                 sleep(400);
             } catch (IOException e) {

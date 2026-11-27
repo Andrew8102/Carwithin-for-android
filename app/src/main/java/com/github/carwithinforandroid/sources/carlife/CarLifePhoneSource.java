@@ -22,8 +22,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class CarLifePhoneSource implements PhoneVideoSource {
 
-    /** 等待 Car+ 在本机监听端口的最长时间。 */
-    private static final long CONNECT_TIMEOUT_MS = 20_000L;
+    /**
+     * 等待 Car+ 在本机监听端口的最长时间。
+     *
+     * <p>实测 Car+ 被拉起后端口只开很短一瞬，所以本类必须<b>先</b>进入等待，
+     * 再由调用方去拉起 Car+，两者顺序反了就会一直等到超时。
+     */
+    private static final long CONNECT_TIMEOUT_MS = 30_000L;
 
     private final int width;
     private final int height;
@@ -74,7 +79,11 @@ public final class CarLifePhoneSource implements PhoneVideoSource {
             @Override
             public void onClosed(String reason) {
                 LogBus.log("CarLife 会话结束：" + reason);
-                if (running.get() && callback != null) {
+                if (!running.get()) return;
+                if ("等待手机端监听超时".equals(reason)) {
+                    LogBus.log("提示：Car+ 的端口只开了很短一瞬。请用「拉起+直连（一键）」——它先让本类在端口上等，再去拉起 Car+。");
+                }
+                if (callback != null) {
                     callback.onError(new IOException("CarLife 会话结束：" + reason));
                 }
             }

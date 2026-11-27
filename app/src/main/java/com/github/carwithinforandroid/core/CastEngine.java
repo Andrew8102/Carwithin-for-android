@@ -44,23 +44,35 @@ public final class CastEngine implements PhoneVideoSource.Callback {
         outputReady = false;
         outputFailureLogged = false;
 
-        // 先起仪表输出，但失败不阻断采集：本地预览 / 诊断仍需要收到 Car+ 的帧。
-        try {
-            output.start(context, 1024, 480, 25);
-            outputReady = true;
-        } catch (Throwable e) {
-            String why = e.getMessage() == null ? e.toString() : e.getMessage();
-            LogBus.log("仪表输出未就绪：" + why);
-            LogBus.log("已切换为「只采集」：画面会在本地预览显示，不推极核");
-        }
-
+        // 先启动采集源。CarLife 的窗口期只有一两秒：Car+ 打开 7 个端口后若没有 HU 连入
+        // 会立刻放弃，所以必须先让 CarLifeLink 在端口上等，再让用户去拉起 Car+。
+        // 采集失败就直接结束，不启动输出。
         try {
             source.start(context, this);
-            state.set(outputReady ? "RUNNING" : "RUNNING_LOCAL_ONLY");
         } catch (Throwable e) {
             state.set("ERROR: " + e.getMessage());
             onError(e);
+            return;
         }
+        // 采集过程中可能已通过 onError 进入 ERROR；不要用 RUNNING_LOCAL_ONLY 覆盖掉失败原因。
+        if (!state.get().startsWith("ERROR")) {
+            state.set("RUNNING_LOCAL_ONLY");
+        }
+
+        // 仪表输出独立线程：网络发现/握手可能耗时数秒，不能挡住采集线程。
+        Thread outputThread = new Thread(() -> {
+            try {
+                output.start(context, 1024, 480, 25);
+                outputReady = true;
+                if (!state.get().startsWith("ERROR")) state.set("RUNNING");
+            } catch (Throwable e) {
+                String why = e.getMessage() == null ? e.toString() : e.getMessage();
+                LogBus.log("仪表输出未就绪：" + why);
+                LogBus.log("已切换为「只采集」：画面会在本地预览显示，不推极核");
+            }
+        }, "cast-output");
+        outputThread.setDaemon(true);
+        outputThread.start();
     }
 
     public void stop() {
