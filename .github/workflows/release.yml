@@ -136,6 +136,12 @@ jobs:
         if: ${{ steps.ver.outputs.is_release != 'true' }}
         env:
           VERSION_SUFFIX: ${{ steps.ver.outputs.suffix }}
+          # debug 也复用正式密钥签名（见 app/build.gradle.kts），所以这里必须把
+          # 密钥相关的环境变量一起传进来，否则 signingConfig 里的密码为空、签名直接失败。
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_TYPE: ${{ secrets.KEYSTORE_TYPE || 'PKCS12' }}
         run: ./gradlew :app:assembleDebug --no-daemon
 
       - name: Add debug APK to dist
