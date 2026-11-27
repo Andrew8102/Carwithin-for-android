@@ -27,10 +27,10 @@ public final class ZeehoOutput implements DashboardOutput {
 
     @Override
     public void start(Context context, int width, int height, int fps) throws IOException {
-        if (profile != null) {
-            width = profile.width;
-            height = profile.height;
-        }
+        // 尺寸以调用方给的为准：CarLife 只能给 848×480，若这里硬套车型的 1024×480，
+        // 仪表会按错的尺寸解码。等真正需要 32:15 时再做缩放重编码，不要在这一层偷改。
+        int localWidth = width > 0 ? width : (profile == null ? 1024 : profile.width);
+        int localHeight = height > 0 ? height : (profile == null ? 480 : profile.height);
         ZeehoIdentity identity;
         try {
             identity = ZeehoIdentity.load(context);
@@ -43,13 +43,20 @@ public final class ZeehoOutput implements DashboardOutput {
         if (targetIp != null && targetIp.trim().isEmpty()) targetIp = null;
 
         int discoveryPort = profile == null ? ZeehoConnection.DEFAULT_DISCOVERY_PORT : profile.discoveryPort;
-        connection = new ZeehoConnection(localIp, targetIp, identity,
+        ZeehoConnection created = new ZeehoConnection(localIp, targetIp, identity,
                 context.getPackageName(), versionCode(context),
                 Build.MODEL, String.valueOf(Build.VERSION.SDK_INT),
-                width, height, discoveryPort);
+                localWidth, localHeight, discoveryPort);
+        connection = created;
         try {
-            connection.start();
+            created.start();
+        } catch (IOException e) {
+            created.close();          // 关掉已 bind 的 3 个监听端口，否则重试必报端口占用
+            connection = null;
+            throw e;
         } catch (GeneralSecurityException e) {
+            created.close();
+            connection = null;
             throw new IOException("仪表会话握手失败", e);
         }
     }

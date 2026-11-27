@@ -497,6 +497,11 @@ public class MainActivity extends Activity {
         testButton.setOnClickListener(safe("测试图投屏", () -> session.startTest(this, null)));
         card.addView(testButton);
 
+        // 忘了先连仪表 Wi-Fi 时用这个：只补连仪表，CarLife 会话不重开。
+        Button retryOutBtn = button("重连仪表（不改 CarLife 会话）", "#22C55E");
+        retryOutBtn.setOnClickListener(safe("重连仪表", () -> session.retryOutput(this)));
+        card.addView(retryOutBtn);
+
         stopButton = button("停止投屏", "#475569");
         stopButton.setEnabled(false);
         stopButton.setOnClickListener(safe("停止投屏", () -> stopService(

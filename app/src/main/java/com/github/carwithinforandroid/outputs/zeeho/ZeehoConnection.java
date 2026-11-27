@@ -455,6 +455,8 @@ public final class ZeehoConnection {
     public void sendFrame(VideoFrame frame) throws IOException {
         Socket socket = videoSocket;
         if (!mediaReady || socket == null) return;
+        // 仪表刚起解码器时只能吃 IDR：第一帧若不是关键帧就丢掉，等下一个 IDR 再发。
+        if (!sentPrefix && !frame.keyframe) return;
         boolean requested;
         try {
             requested = frameRequests.poll(2, TimeUnit.SECONDS) != null;

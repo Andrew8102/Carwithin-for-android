@@ -66,6 +66,7 @@ public final class CastSession {
         }
         screenSource.bind(projection);
         currentSource = screenSource;
+        engine.setOutputSize(profile.width, profile.height, profile.fps);
         begin(context, "屏幕采集");
     }
 
@@ -77,6 +78,9 @@ public final class CastSession {
         // 画布尺寸必须用 CarLife 的标准值 848x480，不能用极核的 1024x480：
         // CarLife 的 VIDEO_INIT 只认白名单画布，传 1024x480 大概率协商不成、收不到帧。
         currentSource = new CarLifePhoneSource(CarLifePhoneSource.CARLIFE_WIDTH,
+                CarLifePhoneSource.CARLIFE_HEIGHT, CarLifePhoneSource.CARLIFE_FPS);
+        // 申报尺寸跟着真实画布走，仪表才不会按 1024×480 去解 848×480 的流。
+        engine.setOutputSize(CarLifePhoneSource.CARLIFE_WIDTH,
                 CarLifePhoneSource.CARLIFE_HEIGHT, CarLifePhoneSource.CARLIFE_FPS);
         begin(context, "CarLife 车机端 " + CarLifePhoneSource.CARLIFE_WIDTH + "x"
                 + CarLifePhoneSource.CARLIFE_HEIGHT + "@" + CarLifePhoneSource.CARLIFE_FPS);
@@ -91,6 +95,7 @@ public final class CastSession {
                 ? TestPatternSource.PATTERN_BARS : testPattern;
         currentSource = new TestPatternSource(pattern, profile.width, profile.height,
                 profile.fps, profile.bitrateKbps);
+        engine.setOutputSize(profile.width, profile.height, profile.fps);
         begin(context, "测试图 " + TestPatternSource.patternName(pattern));
     }
 
@@ -154,6 +159,21 @@ public final class CastSession {
     /** 仪表输出是否已建立；false 表示当前只在本地预览、不推极核。 */
     public boolean outputReady() {
         return engine.isOutputReady();
+    }
+
+    /**
+     * 只重连仪表，不动已经建立的 CarLife 会话。
+     *
+     * <p>CarLife 的端口窗口很窄、重连一次要重新拉起 Car+，所以「忘连 Wi-Fi」这种情况
+     * 不应该逼用户把整条链路推倒重来。
+     */
+    public void retryOutput(Context context) {
+        if (!active.get()) {
+            LogBus.log("当前没有进行中的投屏，请先开始 CarLife 直连");
+            return;
+        }
+        engine.retryOutput(context.getApplicationContext());
+        notifyChanged();
     }
 
     public VehicleProfile profile() {
