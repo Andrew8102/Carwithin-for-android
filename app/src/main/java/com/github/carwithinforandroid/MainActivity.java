@@ -679,10 +679,12 @@ public class MainActivity extends Activity {
         fullTip.setTextSize(10f);
         fullTip.setTextColor(Color.parseColor(MUTED));
         fullTip.setPadding(0, dp(4), 0, 0);
-        fullTip.setText("全屏时：横屏 + 常亮 + 隐藏状态栏，画面按 848×480 等比居中。"
+        fullTip.setText("全屏时：横屏 + 常亮 + 隐藏状态栏，画面按实际协商的画布尺寸等比居中。"
                 + "按返回键退出。\n"
                 + "用法：先全屏 → 再去极核 App 点「投屏」选「整个屏幕」授权 → 切回本页。"
-                + "录制的是这块画面，触控仍可作用于车机（手机相当于触控板）。");
+                + "录制的是这块画面，触控仍可作用于车机（手机相当于触控板）。\n"
+                + "想满屏：车机有上下任务栏时，把「宽度/高度」填成"
+                + "车机屏幕减去安全区后的可用区尺寸（见「③ 车型与调试选项」）。");
         card.addView(fullTip);
 
         root.addView(card);
@@ -882,6 +884,19 @@ public class MainActivity extends Activity {
         targetIpInput = input("仪表 IP（可留空自动发现）", VehicleProfile.targetIp(this));
         card.addView(widthInput);
         card.addView(heightInput);
+
+        TextView sizeTip = new TextView(this);
+        sizeTip.setText("镜像投屏满屏要点：上面的宽高是请求 Car+ 渲染的画布尺寸，"
+                + "应填「车机屏幕减去上下任务栏安全区」后的可用区尺寸，"
+                + "不是车机整屏尺寸——按整屏填，投到仪表会被任务栏挤小。"
+                + "改完点下方「保存配置」，下次投屏生效。"
+                + "若日志显示协商尺寸仍是 848×480（请求被无视），需在 Car+ 一侧改。");
+        sizeTip.setTextSize(10f);
+        sizeTip.setTextColor(Color.parseColor(MUTED));
+        sizeTip.setPadding(0, dp(4), 0, 0);
+        sizeTip.setLineSpacing(0, 1.25f);
+        card.addView(sizeTip);
+
         card.addView(fpsInput);
         card.addView(bitrateInput);
         card.addView(discoveryPortInput);
