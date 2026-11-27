@@ -254,7 +254,12 @@ public final class ZeehoConnection {
             throw new IOException("仪表设备资料不完整");
         }
         huid = receivedHuid;
-        byte[] signature = identity.sign(receivedHuid);
+        byte[] signature;
+        try {
+            signature = identity.sign(receivedHuid);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("仪表身份签名失败", e);
+        }
         signedHuid = signature;
         JSONObject reply = new JSONObject();
         try {
@@ -401,8 +406,12 @@ public final class ZeehoConnection {
         if (signedHuid == null || !Arrays.equals(echoed, signedHuid)) {
             throw new IOException("媒体身份回显不匹配");
         }
-        if (!identity.verify(echoed, huid)) {
-            throw new IOException("媒体身份签名校验失败");
+        try {
+            if (!identity.verify(echoed, huid)) {
+                throw new IOException("媒体身份签名校验失败");
+            }
+        } catch (GeneralSecurityException e) {
+            throw new IOException("媒体身份签名校验失败", e);
         }
         configured = true;
         LogBus.log("媒体身份回显校验通过，仪表报告 " + width + "×" + height);
