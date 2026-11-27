@@ -34,8 +34,11 @@ import com.github.carwithinforandroid.core.CrashGuard;
 import com.github.carwithinforandroid.core.FrameStats;
 import com.github.carwithinforandroid.core.LogBus;
 import com.github.carwithinforandroid.core.VehicleProfile;
+import com.github.carwithinforandroid.core.VideoFrame;
 import com.github.carwithinforandroid.launcher.CarAppLauncher;
+import com.github.carwithinforandroid.media.H264Decoder;
 import com.github.carwithinforandroid.sources.screen.TestPatternSource;
+import com.github.carwithinforandroid.ui.PreviewView;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -84,6 +87,12 @@ public class MainActivity extends Activity {
     private Button stopButton;
     private Button testButton;
 
+    private PreviewView previewView;
+    private TextView previewHint;
+    private H264Decoder decoder;
+    private volatile int previewFrames;
+    private volatile int previewLuma = -1;
+
     private final Runnable refresher = new Runnable() {
         @Override
         public void run() {
@@ -113,12 +122,14 @@ public class MainActivity extends Activity {
         addLaunchCard(root);
         addControlCard(root);
         addStatusCard(root);
+        addPreviewCard(root);
         addStatsCard(root);
         addVehicleCard(root);
         addLogCard(root);
         addFooter(root);
         setContentView(scroll);
 
+        setupPreviewDecoder();
         session.setListener(() -> handler.post(this::render));
         requestRuntimePermissions();
         handler.post(refresher);
@@ -127,6 +138,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(refresher);
+        session.setFrameTap(null);
+        if (decoder != null) {
+            decoder.release();
+            decoder = null;
+        }
         session.setListener(null);
         super.onDestroy();
     }
@@ -162,7 +178,9 @@ public class MainActivity extends Activity {
         LinearLayout card = card("① 拉起车机互联界面（投屏前）");
 
         TextView tip = new TextView(this);
-        tip.setText("录屏投屏无需此步。CarLife 投屏要求 Car+ 先进入 CarLife 模式（通常需连接 ICCOA/CarLife+/亿连车机）；极核仪表不是这类车机，可能无法满足。点「诊断」查看端口状态。");
+        tip.setText("CarLife 全程在本机完成，不需要真车机：Car+ 的 CarLife 组件会在 127.0.0.1 监听 7 个端口，本 App 冒充车机（HU）连入收流。\n"
+                + "操作顺序：①「尝试进 CarLife」自动逐个拉起入口并观察端口 → 端口 7/7 后 ②点「CarLife 直连」→ 画面应出现在下方本地预览。\n"
+                + "录屏投屏不需要这一步。");
         tip.setTextSize(11f);
         tip.setTextColor(Color.parseColor(MUTED));
         tip.setLineSpacing(0, 1.3f);
@@ -189,6 +207,19 @@ public class MainActivity extends Activity {
         btnRow.addView(diagBtn);
         btnRow.addView(detectBtn);
         card.addView(btnRow);
+
+        // 调试用：枚举 Car+ 真实组件 + 逐个尝试拉起，直到 7 端口开始监听。
+        LinearLayout debugRow = new LinearLayout(this);
+        debugRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button enumBtn = button("枚举组件", "#7C3AED");
+        enumBtn.setOnClickListener(safe("枚举组件", this::doEnumerate));
+        Button tryBtn = button("尝试进 CarLife", "#DB2777");
+        tryBtn.setOnClickListener(safe("尝试进 CarLife", this::doTryEnterCarlife));
+        enumBtn.setLayoutParams(rowParams());
+        tryBtn.setLayoutParams(rowParams());
+        debugRow.addView(enumBtn);
+        debugRow.addView(tryBtn);
+        card.addView(debugRow);
 
         launchResult = new TextView(this);
         launchResult.setTextSize(11f);
@@ -247,8 +278,62 @@ public class MainActivity extends Activity {
         }, "diagnose").start();
     }
 
-    /** 包装点击事件：任何异常都记录并在界面提示，避免直接闪退。 */
-    private View.OnClickListener safe(String label, Runnable action) {
+    /** 枚举 Car+ 声明的全部 Activity，用来找真实的 CarLife 入口类名。 */
+    private void doEnumerate() {
+        String pkg = packageInput.getText().toString().trim();
+        if (pkg.isEmpty()) {
+            pkg = VehicleProfile.launchPackage(this);
+            packageInput.setText(pkg);
+        }
+        final String pkgFinal = pkg;
+        if (pkgFinal.isEmpty()) {
+            launchResult.setText("请先在上方填写包名，例如 com.oplus.ocar");
+            return;
+        }
+        launchResult.setText("正在枚举 " + pkgFinal + " 的组件…");
+        final Context app = getApplicationContext();
+        new Thread(() -> {
+            String text;
+            try {
+                text = CarAppLauncher.describeActivities(app, pkgFinal);
+            } catch (Throwable e) {
+                text = "枚举失败：" + e;
+                LogBus.log("枚举组件失败：" + e);
+            }
+            final String out = text;
+            runOnUiThread(() -> launchResult.setText(out));
+        }, "enumerate-activities").start();
+    }
+
+    /** 逐个拉起疑似 CarLife 入口，命中 7 端口监听即停。 */
+    private void doTryEnterCarlife() {
+        String pkg = packageInput.getText().toString().trim();
+        if (pkg.isEmpty()) {
+            pkg = VehicleProfile.launchPackage(this);
+            packageInput.setText(pkg);
+        }
+        final String pkgFinal = pkg;
+        if (pkgFinal.isEmpty()) {
+            launchResult.setText("请先在上方填写包名，例如 com.oplus.ocar");
+            return;
+        }
+        launchResult.setText("开始逐个尝试拉起（每个约 2.5 秒，界面会跳到 Car+）…");
+        final Context app = getApplicationContext();
+        new Thread(() -> {
+            String text;
+            try {
+                text = CarAppLauncher.tryEnterCarlife(app, pkgFinal, line ->
+                        runOnUiThread(() -> launchResult.setText(line + "\n（进行中…）")));
+            } catch (Throwable e) {
+                text = "尝试失败：" + e;
+                LogBus.log("尝试进入 CarLife 失败：" + e);
+            }
+            final String out = text;
+            runOnUiThread(() -> launchResult.setText(out));
+        }, "try-enter-carlife").start();
+    }
+
+    /** 包装点击事件：任何异常都记录并在界面提示，避免直接闪退。 */    private View.OnClickListener safe(String label, Runnable action) {
         return v -> {
             try {
                 action.run();
@@ -308,7 +393,7 @@ public class MainActivity extends Activity {
         }));
         card.addView(startButton);
 
-        carlifeButton = button("CarLife 直连（实验·需 Car+ 进入车机模式）", "#14B8A6");
+        carlifeButton = button("CarLife 直连（收 Car+ 的 H.264，零转码）", "#14B8A6");
         carlifeButton.setOnClickListener(safe("CarLife 投屏", () -> {
             if (VehicleProfile.autoLaunch(this)) {
                 doLaunch();
@@ -328,7 +413,8 @@ public class MainActivity extends Activity {
         card.addView(stopButton);
 
         TextView hint = new TextView(this);
-        hint.setText("推荐：录屏投屏（通用、不依赖车机配对）。CarLife 直连为零转码实验功能，仅在 Car+ 已连接 ICCOA/CarLife+/亿连车机、7 端口监听时可用；可用①的「诊断」确认。测试图用于确认仪表能出画。");
+        hint.setText("推荐顺序：先用①的「尝试进 CarLife」把 7 个端口点亮 → 点 CarLife 直连 → 在「本地预览」卡确认出画。\n"
+                + "仪表不在线也能跑：此时只采集不推流，预览照常显示。录屏投屏不依赖 Car+；测试图用于确认仪表能出画。");
         hint.setTextSize(11f);
         hint.setTextColor(Color.parseColor(MUTED));
         hint.setLineSpacing(0, 1.35f);
@@ -364,6 +450,71 @@ public class MainActivity extends Activity {
         card.addView(detailValue);
 
         root.addView(card);
+    }
+
+    /* ---------------- 本地预览卡 ---------------- */
+
+    private void addPreviewCard(LinearLayout root) {
+        LinearLayout card = card("Car+ 本地预览（不接极核也能验证出画）");
+
+        previewView = new PreviewView(this);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(170));
+        lp.topMargin = dp(10);
+        previewView.setLayoutParams(lp);
+        card.addView(previewView);
+
+        previewHint = new TextView(this);
+        previewHint.setTextSize(11f);
+        previewHint.setTypeface(Typeface.MONOSPACE);
+        previewHint.setTextColor(Color.parseColor(MUTED));
+        previewHint.setPadding(0, dp(8), 0, 0);
+        previewHint.setText("尚未收到 Car+ 画面。CarLife 链路一旦收到帧，这里会直接显示。");
+        card.addView(previewHint);
+
+        root.addView(card);
+    }
+
+    /** 接好「CarLife 帧 → 本地 H.264 解码 → 预览位图」的通路。 */
+    private void setupPreviewDecoder() {
+        decoder = new H264Decoder(new H264Decoder.Listener() {
+            @Override
+            public void onDecoderReady(int w, int h) {
+                handler.post(() -> {
+                    if (previewView != null) previewView.setAspect(w, h);
+                });
+            }
+
+            @Override
+            public void onFrameRendered(long totalFrames, int luminance) {
+                previewFrames = (int) totalFrames;
+                previewLuma = luminance;
+            }
+
+            @Override
+            public void onBitmap(android.graphics.Bitmap bitmap) {
+                PreviewView view = previewView;
+                if (view != null) view.setFrame(bitmap);
+            }
+
+            @Override
+            public void onDecoderError(String message) {
+                handler.post(() -> {
+                    if (previewHint != null) previewHint.setText("本地预览解码失败：" + message);
+                });
+            }
+        });
+        session.setFrameTap(this::onSourceFrame);
+    }
+
+    /** 采集线程回调：把 Annex-B 帧喂给本地解码器。 */
+    private void onSourceFrame(VideoFrame frame) {
+        H264Decoder d = decoder;
+        if (d == null || frame == null || frame.accessUnit == null) return;
+        VehicleProfile p = session.profile();
+        int w = p == null ? 1024 : p.width;
+        int h = p == null ? 480 : p.height;
+        d.feed(frame.accessUnit, 0, frame.accessUnit.length, frame.ptsMs * 1000L, w, h);
     }
 
     /* ---------------- 帧率统计卡 ---------------- */
@@ -642,10 +793,31 @@ public class MainActivity extends Activity {
             builder.append(lines.get(i)).append('\n');
         }
         logValue.setText(builder.length() == 0 ? "暂无日志。" : builder.toString());
+
+        renderPreviewHint();
+    }
+
+    private void renderPreviewHint() {
+        if (previewHint == null) return;
+        String push = session.outputReady() ? "推极核：开" : "推极核：关（仅本地预览）";
+        if (previewFrames > 0) {
+            previewHint.setText("已解码 " + previewFrames + " 帧 · 平均亮度 " + previewLuma + " · " + push);
+        } else if (!session.isActive()) {
+            previewHint.setText("尚未收到 Car+ 画面。CarLife 链路一旦收到帧，这里会直接显示。");
+        } else if (decoder != null && decoder.isStarted()) {
+            previewHint.setText("解码器已就绪，等待首个关键帧… · " + push);
+        } else {
+            previewHint.setText("等待 SPS/PPS（首个关键帧）… · " + push);
+        }
     }
 
     private static String hintFor(String status) {
         if ("STREAMING".equals(status)) return "视频流已推送至仪表，操作请在手机上完成。";
+        if ("RUNNING_LOCAL_ONLY".equals(status)) {
+            return "仪表未连上，当前只在本地预览。下方预览卡能出画就说明 Car+ 链路已通；连上仪表 Wi-Fi 后会继续推流。";
+        }
+        if ("RUNNING".equals(status)) return "采集已启动，等待首帧。";
+        if (status.startsWith("FRAME_ERROR")) return "推帧中断，本地预览仍在继续，请看下方日志。";
         if (status.startsWith("ERROR")) return "发生错误，请查看下方运行日志与 docs/TEST-PLAN.md。";
         if (status.startsWith("CARLIFE")) {
             return "CarLife 实验链路：等待 Car+ 监听 7 个端口。需 Car+ 已进入 CarLife 模式（通常要先连 ICCOA/CarLife+/亿连车机）。极核仪表非此类车机，若一直卡住请用录屏投屏。";
@@ -658,7 +830,8 @@ public class MainActivity extends Activity {
 
     private static String colorFor(String status) {
         if ("STREAMING".equals(status)) return GREEN;
-        if (status.startsWith("ERROR")) return RED;
+        if ("RUNNING_LOCAL_ONLY".equals(status) || "RUNNING".equals(status)) return GREEN;
+        if (status.startsWith("ERROR") || status.startsWith("FRAME_ERROR")) return RED;
         if ("IDLE".equals(status)) return MUTED;
         return AMBER;
     }

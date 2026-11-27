@@ -3,9 +3,11 @@ package com.github.carwithinforandroid.launcher;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.os.Build;
 import android.provider.Settings;
 
 import com.github.carwithinforandroid.core.LogBus;
@@ -15,7 +17,9 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 车机互联界面启动器 + 诊断。
@@ -138,9 +142,8 @@ public final class CarAppLauncher {
         sb.append("  ").append(ports.toString()).append("\n");
         if (listening == 0) {
             sb.append("✗ 未检测到 CarLife 端口监听。\n")
-                    .append("  Car+ 尚未进入 CarLife 模式——通常需要先连接支持\n")
-                    .append("  ICCOA / CarLife+ / 亿连的车机。极核仪表不是这类车机，\n")
-                    .append("  因此本场景CarLife 直连大概率不可用，请改用录屏投屏。\n");
+                    .append("  Car+ 还没进入 CarLife 模式。点「尝试进 CarLife」会枚举入口\n")
+                    .append("  并逐个拉起试探；也可以直接用「录屏投屏」。\n");
         } else if (listening < CARLIFE_PORTS.length) {
             sb.append("△ 仅 ").append(listening).append("/").append(CARLIFE_PORTS.length)
                     .append(" 个端口监听，CarLife 可能正在启动。\n");
@@ -209,8 +212,8 @@ public final class CarAppLauncher {
         try {
             context.startActivity(chosen);
             String msg = "已拉起 " + packageName + "（" + path + "）。\n"
-                    + "注意：拉起界面不代表已进入 CarLife 模式；请点「诊断」确认 7 个端口是否在监听。\n"
-                    + "若端口未监听，说明 Car+ 需要先连接车机，本场景请改用录屏投屏。";
+                    + "拉起界面不等于进入 CarLife 模式；点「诊断」看 7 个端口，"
+                    + "或用「尝试进 CarLife」自动逐个入口试探。";
             LogBus.log("已拉起 " + packageName + "（" + path + "）");
             return msg;
         } catch (Exception e) {
@@ -229,6 +232,187 @@ public final class CarAppLauncher {
             context.startActivity(intent);
         } catch (Exception e) {
             LogBus.log("打开应用设置失败：" + e.getMessage());
+        }
+    }
+
+    /* ------------------------------------------------------------ 组件枚举与尝试 */
+
+    /** 一个已声明的 Activity。 */
+    public static final class ActivityEntry {
+        public final String name;
+        public final boolean exported;
+        public final boolean enabled;
+        /** 名字里含 carlife/cast/mirror/link 等字样，优先尝试。 */
+        public final boolean likelyCarLife;
+
+        ActivityEntry(String name, boolean exported, boolean enabled) {
+            this.name = name;
+            this.exported = exported;
+            this.enabled = enabled;
+            this.likelyCarLife = isLikelyCarLife(name);
+        }
+
+        public String shortName() {
+            int i = name.lastIndexOf('.');
+            return i < 0 ? name : name.substring(i + 1);
+        }
+    }
+
+    private static boolean isLikelyCarLife(String name) {
+        String n = name.toLowerCase(Locale.ROOT);
+        return n.contains("carlife") || n.contains("carplay") || n.contains("cast")
+                || n.contains("mirror") || n.contains("carlink") || n.contains("icar");
+    }
+
+    /**
+     * 枚举某个包声明的全部 Activity。
+     *
+     * <p>这是解决「找不到可拉起界面」的关键：不同 ColorOS / Car+ 版本里 CarLife 入口类名不一样，
+     * 而且未导出的组件 {@code resolveActivity} 会返回 null，必须直接从 PackageInfo 里取。
+     * 依赖 AndroidManifest 的 {@code <queries>} 包可见性声明。
+     */
+    public static List<ActivityEntry> activities(Context context, String packageName) {
+        List<ActivityEntry> out = new ArrayList<>();
+        if (packageName == null || packageName.trim().isEmpty()) return out;
+        String pkg = packageName.trim();
+        PackageManager pm = context.getPackageManager();
+        PackageInfo info;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                info = pm.getPackageInfo(pkg,
+                        PackageManager.PackageInfoFlags.of(PackageManager.GET_ACTIVITIES));
+            } else {
+                info = pm.getPackageInfo(pkg, PackageManager.GET_ACTIVITIES);
+            }
+        } catch (Throwable e) {
+            LogBus.log("枚举组件失败：" + pkg + " " + e.getMessage());
+            return out;
+        }
+        ActivityInfo[] acts = info.activities;
+        if (acts == null) return out;
+        for (ActivityInfo ai : acts) {
+            if (ai == null || ai.name == null) continue;
+            out.add(new ActivityEntry(ai.name, ai.exported, ai.enabled));
+        }
+        Collections.sort(out, (a, b) -> {
+            if (a.likelyCarLife != b.likelyCarLife) return a.likelyCarLife ? -1 : 1;
+            return a.name.compareTo(b.name);
+        });
+        return out;
+    }
+
+    /** 格式化成可读列表，★ 标记疑似 CarLife 入口。 */
+    public static String describeActivities(Context context, String packageName) {
+        List<ActivityEntry> list = activities(context, packageName);
+        if (list.isEmpty()) {
+            return "枚举不到 " + packageName + " 的 Activity。\n"
+                    + "可能原因：未安装、被系统隐藏，或包可见性声明未命中。";
+        }
+        StringBuilder sb = new StringBuilder("共 " + list.size()
+                + " 个 Activity（★ = 疑似 CarLife 入口）：\n");
+        for (ActivityEntry e : list) {
+            sb.append(e.likelyCarLife ? "★ " : "· ").append(e.name);
+            if (!e.exported) sb.append("  [未导出]");
+            if (!e.enabled) sb.append("  [已禁用]");
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** 当前有几个 CarLife 端口在监听。 */
+    public static int countOpenPorts(int timeoutMs) {
+        int n = 0;
+        for (int port : CARLIFE_PORTS) {
+            if (portOpen(port, timeoutMs)) n++;
+        }
+        return n;
+    }
+
+    /** 进度回调（在调用线程触发，UI 侧需自行切主线程）。 */
+    public interface Progress {
+        void onProgress(String text);
+    }
+
+    /**
+     * 逐个拉起「疑似 CarLife」的可导出 Activity，每次拉起后轮询 7 个端口，命中即停。
+     *
+     * <p>阻塞方法，必须在后台线程调用。端口在 127.0.0.1 上未监听时会立刻 RST，
+     * 所以每轮探测很快；一旦 7 个端口全部监听，说明 Car+ 已交出了镜像 Surface 并进入 CarLife 模式。
+     *
+     * @return 多行可读报告
+     */
+    public static String tryEnterCarlife(Context context, String packageName, Progress progress) {
+        final int perTryMs = 2500;
+        if (packageName == null || packageName.trim().isEmpty()) {
+            return "包名为空，请先填写车机互联 App 的包名。";
+        }
+        String pkg = packageName.trim();
+        List<ActivityEntry> all = activities(context, pkg);
+        if (all.isEmpty()) {
+            return "枚举不到 " + pkg + " 的组件，无法尝试。\n请先确认已安装、且包名正确。";
+        }
+
+        int already = countOpenPorts(200);
+        if (already == CARLIFE_PORTS.length) {
+            return "✓ 7 个端口已经在监听，Car+ 已处于 CarLife 模式，直接点「CarLife 直连」即可。";
+        }
+
+        List<ActivityEntry> candidates = new ArrayList<>();
+        for (ActivityEntry e : all) {
+            if (e.likelyCarLife && e.exported && e.enabled) candidates.add(e);
+        }
+        if (candidates.isEmpty()) {
+            return "没有「疑似 CarLife 且可外部拉起」的 Activity。\n\n"
+                    + describeActivities(context, pkg);
+        }
+
+        StringBuilder sb = new StringBuilder("依次尝试 " + candidates.size()
+                + " 个疑似入口（每个等 " + perTryMs + "ms 观察端口）：\n");
+        if (progress != null) progress.onProgress(sb.toString());
+
+        for (ActivityEntry e : candidates) {
+            try {
+                Intent intent = new Intent();
+                intent.setComponent(new ComponentName(pkg, e.name));
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+            } catch (Throwable t) {
+                sb.append("✗ ").append(e.shortName()).append(" 拉起失败：")
+                        .append(t.getMessage()).append('\n');
+                if (progress != null) progress.onProgress(sb.toString());
+                continue;
+            }
+            if (progress != null) progress.onProgress(sb + "已拉起 " + e.shortName() + "，观察端口…");
+
+            int open = 0;
+            long deadline = System.currentTimeMillis() + perTryMs;
+            while (System.currentTimeMillis() < deadline) {
+                open = countOpenPorts(150);
+                if (open == CARLIFE_PORTS.length) break;
+                sleep(200);
+            }
+            boolean hit = open == CARLIFE_PORTS.length;
+            sb.append(hit ? "✓ " : "△ ").append(e.shortName())
+                    .append(" → ").append(open).append("/7 端口\n");
+            if (progress != null) progress.onProgress(sb.toString());
+            if (hit) {
+                sb.append("成功：Car+ 已进入 CarLife 模式，现在可以点「CarLife 直连」投屏。\n");
+                LogBus.log("Car+ 已进入 CarLife 模式（由 " + e.name + " 拉起）");
+                return sb.toString();
+            }
+        }
+
+        sb.append("\n未命中。说明这些入口都不能单独把 Car+ 拉进 CarLife 模式——\n")
+                .append("Car+ 大概率还需要车机侧参与发现/配对（或需要系统级权限的 Intent）。\n")
+                .append("可点「枚举组件」查看全量列表，把可疑类名填进 Activity 输入框再试。\n");
+        return sb.toString();
+    }
+
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 }

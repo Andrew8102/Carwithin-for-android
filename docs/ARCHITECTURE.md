@@ -5,21 +5,28 @@
 ```
 手机互联来源 (PhoneVideoSource)
   ├─ ScreenCaptureSource（MediaProjection 录屏，通用，已实现）
-  ├─ CarLifePhoneSource（OPPO Car+ 七端口，零转码，实验性/需车机配对）
+  ├─ CarLifePhoneSource（OPPO Car+ 七端口，零转码，本机冒充 HU）
   ├─ TestPatternSource（测试图，免授权，已实现）
   ├─ IccoaPhoneSource（专有 icar-sdk.dex，槽位）
   └─ HiCarPhoneSource（华为，占位）
         ↓ VideoFrame (Annex-B H.264 AU)
-CastEngine
-        ↓
-ZeehoOutput → ZeehoConnection → 极核仪表
+CastEngine ─┬→ FrameTap → H264Decoder → PreviewView（本地预览，不依赖仪表）
+            └→ ZeehoOutput → ZeehoConnection → 极核仪表
 ```
+
+**采集与输出解耦**：`CastEngine.start()` 先试 `output.start()`，失败只记日志并置
+`outputReady=false`，然后照常 `source.start()`。此时状态为 `RUNNING_LOCAL_ONLY`，
+帧仍然会走 `FrameTap` 到本地预览。这样调试 CarLife 链路不需要极核主机在场。
 
 CarLife 来源链路：`com.oplus.ocar`（Car+）在本机 127.0.0.1 监听 7 个 TCP 端口
 （CMD 7240 / VIDEO 8240 / MEDIA 9240 / TTS 9241 / VR 9242 / TOUCH 9340 / DATA 9440），
-`CarLifeLink` 作为车机端连入，完成版本协商 → 身份证明(MD5) → RSA/AES 内容加密 →
+`CarLifeLink` 作为车机端（HU）连入，完成版本协商 → 身份证明(MD5) → RSA/AES 内容加密 →
 VIDEO_INIT 画布协商 → 逐帧收 H.264。帧经 `H264.toAnnexB` 规范化后交给 CastEngine。
 协议栈自 CarNine 完整移植（`sources/carlife/CarLifeLink.java`，约 1000 行，仅依赖 JDK）。
+
+**HU 就在手机里**：CarLife 的 HU 不需要是另一台设备。CarNine 已在 realme 真机验证——
+它自己冒充 HU 连本机回环收流，再转推九号仪表。所以"极核不是 CarLife 车机"不构成障碍，
+唯一变量是能否让 Car+ 交出镜像 Surface 并开始监听端口（见 `docs/ICCOA-STATUS.md`）。
 
 ## 端口与时序（极核 AE4 MAX2+ 6.2 寸）
 

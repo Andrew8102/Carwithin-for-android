@@ -130,6 +130,20 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk "dist/${{ steps.ver.outputs.out_name }}"
           ls -l dist
 
+      # 预览版额外产出一个 debug 包：与正式版同包名、debug 签名，装前需卸载正式版。
+      # 用来抓完整堆栈、连 adb 调试；正式版不产出。
+      - name: Build debug APK
+        if: ${{ steps.ver.outputs.is_release != 'true' }}
+        env:
+          VERSION_SUFFIX: ${{ steps.ver.outputs.suffix }}
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Add debug APK to dist
+        if: ${{ steps.ver.outputs.is_release != 'true' }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk dist/CarWithin-debug.apk
+          ls -l dist
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
@@ -167,5 +181,10 @@ jobs:
             | 提交 | `${{ github.sha }}` |
             | 构建号 | #${{ github.run_number }} |
 
-            > 与正式版使用同一套签名密钥（仓库已配置 Secrets 时），可直接覆盖安装；
-            > 未配置密钥时本包为 debug 签名，与正式版互相覆盖需先卸载。
+            **下载哪个？**
+
+            - `carwithin-for-android-dev.apk`：正式签名的预览版，可覆盖安装到已有的正式版。
+            - `CarWithin-debug.apk`：debug 签名、可直接连 adb 调试，**装前必须先卸载正式版**。
+
+            > 与正式版使用同一套签名密钥（仓库已配置 Secrets 时），预览版可直接覆盖安装；
+            > debug 签名与正式签名不同，两者互相覆盖都需要先卸载。

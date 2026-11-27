@@ -88,6 +88,13 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // 调试包与正式版同包名（便于用同一份配置/授权复现问题），
+            // 但 debug 签名与正式签名不同，安装前必须先卸载正式版。
+            versionNameSuffix = "-debug"
+            isMinifyEnabled = false
+            isDebuggable = true
+        }
         getByName("release") {
             // 有正式密钥就用正式签名；没有则退回 debug 签名，保证 CI 仍能产出可安装的包。
             //注意：debug 签名有有效期且系统会提示「未验证」，正式分发请配置 Secrets。

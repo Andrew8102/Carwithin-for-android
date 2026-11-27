@@ -22,6 +22,7 @@
 | --- | --- | --- | --- |
 | **Android 0.3.0**（正式版） | Android 10+（API 29），建议 Android 13+ | [最新 Release](https://github.com/Andrew8102/Carwithin-for-android/releases/latest) | 正式签名，可直接安装 |
 | **开发预览版**（每个提交自动构建） | 同上 | [dev-latest](https://github.com/Andrew8102/Carwithin-for-android/releases/tag/dev-latest) | 同一套签名，可覆盖安装；版本号形如 `0.3.1-dev.42` |
+| **debug 调试版**（同一入口附带） | 同上 | [dev-latest](https://github.com/Andrew8102/Carwithin-for-android/releases/tag/dev-latest) 里的 `CarWithin-debug.apk` | debug 签名、可连 adb；**装前必须先卸载正式版**，版本号形如 `0.3.2-dev.42-debug` |
 
 - APK 由 GitHub Actions 自动构建：推 `v*` tag 发正式版，推 main 自动更新 `dev-latest` 预览版，见 [docs/RELEASE.md](docs/RELEASE.md)。
 - 正式签名（RSA-2048）；若你此前装过 debug 签名的旧包，请先卸载再装。
@@ -35,10 +36,10 @@
 
 | 区域 | 内容 |
 | --- | --- |
-| ① 拉起车机互联界面 | 包名 / Activity 输入、「拉起界面」「检测安装」按钮、自动拉起勾选框 |
-| ① 拉起车机界面 | 包名/Activity 输入、拉起界面、**诊断**（安装/版本/7 端口状态）、检测安装、自动拉起 |
-| ② 投屏控制 | **录屏投屏（推荐）**、CarLife 直连（实验）、测试图验证出画、停止投屏 |
-| 实时状态 / 帧率统计 | 状态（IDLE / STREAMING / ERROR）、来源与输出、采集 / 编码 / 发送 FPS、码率、丢帧 |
+| ① 拉起车机互联界面 | 包名 / Activity 输入、「拉起界面」「诊断」（安装/版本/7 端口状态）「检测安装」、**「枚举组件」「尝试进 CarLife」**、自动拉起勾选框 |
+| ② 投屏控制 | **录屏投屏（推荐）**、CarLife 直连（零转码）、测试图验证出画、停止投屏 |
+| **Car+ 本地预览** | 收到 CarLife 帧就地解码显示，**不需要极核在线**也能验证链路是否通 |
+| 实时状态 / 帧率统计 | 状态（IDLE / RUNNING_LOCAL_ONLY / STREAMING / ERROR）、来源与输出、采集 / 编码 / 发送 FPS、码率、丢帧 |
 | ③ 车型与调试选项 | 车型下拉、分辨率 / 帧率 / 码率 / 发现端口 / 仪表 IP、测试图模式、协议状态说明 |
 
 ## 功能矩阵
@@ -49,11 +50,14 @@
 | --- | --- | --- |
 | **手机屏幕**（MediaProjection） | ✅ 已实现 | 录制整个屏幕，任意 App 画面 |
 | **手机界面录屏**（OPPO Car+ / 小米 CarWith / HiCar 等任意 App） | ✅ **推荐，已实现** | 不依赖车机配对，只要画面能在手机显示就能投 |
-| OPPO Car+（CarLife 直连） | ⚠️ 实验性，条件受限 | 7 端口接收 Car+ 原生 H.264（零转码、免录屏），但**要求 Car+ 已进入 CarLife 模式**——通常需先连接 ICCOA/CarLife+/亿连车机；极核仪表不是这类车机，可能无法触发 |
+| OPPO Car+（CarLife 直连） | ⚠️ 实验性，可自行拉起试探 | 7 端口接收 Car+ 原生 H.264（零转码、免录屏）。**不需要真车机**：Car+ 的 CarLife 组件在本机 `127.0.0.1` 监听，本 App 冒充 HU 连入。前置条件是先把 Car+ 拉进 CarLife 模式，用①「尝试进 CarLife」自动枚举入口试探 |
 | ICCOA CarLink 直连 | ❌ 受专有 SDK 阻塞 | 需 `icar-sdk.dex`，见 [ICCOA 现状](docs/ICCOA-STATUS.md) |
 | 华为 HiCar 直连 | ❌ 未实现 | 另一套专有生态，暂用录屏路线 |
 
-> **关键提示**：Car+ 是手机端，只有连上支持 ICCOA / 百度 CarLife+ / 亿连的**车机端**才会进入 CarLife 模式并监听 7 端口。极核 AE4 MAX2+ 走私有 PXC 协议、不是 CarLife 车机，因此 **CarLife 直连在本场景大概率不可用**。请用①的「诊断」按钮看 7 端口是否监听；未监听就走录屏投屏。
+> **关键修正**：CarLife 的 HU（车机端）**就是你手机上的这个 App**。Car+ 里的 CarLife 组件作为 MD（手机端）在本机回环暴露 7 个 TCP 端口，本 App 连上去握手、协商画布、收 H.264，全程不经过极核。
+> 这与 CarNine 在 realme 真机上的验证一致——它配的九号仪表只负责**输出侧**，输入端同样是自己冒充 HU。
+> 因此"必须先连一台 ICCOA/CarLife+ 车机"的说法不成立；真正的前提只是**把 Car+ 拉进 CarLife 模式**（不同 ColorOS 版本入口类名不同，故提供「枚举组件」+「尝试进 CarLife」）。
+> 如果所有入口都试过仍不监听，再走录屏投屏。
 
 ### 仪表输出
 
@@ -80,7 +84,7 @@
 | 路线 | 按钮 | 前置条件 | 特点 |
 | --- | --- | --- | --- |
 | **录屏投屏（推荐）** | 开始投屏（录屏） | 弹出录屏授权点「允许」 | 通用、不依赖车机配对，任意 App 画面 |
-| **CarLife 直连（实验）** | CarLife 直连 | Car+ 已进入 CarLife 模式、7 端口监听（用①「诊断」确认） | Car+ 原生 H.264、零转码、免录屏；极核仪表非 CarLife 车机，多数情况不可用 |
+| **CarLife 直连（零转码）** | CarLife 直连 | 先点①「尝试进 CarLife」把 7 端口点亮 | Car+ 原生 H.264、零转码、免录屏；画面先在「本地预览」卡确认 |
 
 点「停止投屏」结束。极核老协议不支持仪表触摸反控，操作留在手机上。
 
@@ -88,11 +92,35 @@
 
 > 拉起界面失败：先在手机系统设置里确认 Car+ / CarWith 已安装，点「检测安装」查看已识别的包名；厂商定制系统包名可能不同，可手动填写后拉起。
 
-> **CarLife 停在「等待 Car+」**：说明 Car+ 的 7 个端口没监听。根因是 Car+ 没有进入 CarLife 模式——它通常要先连上 ICCOA/CarLife+/亿连车机才会建端口。极核仪表不是这类车机，所以**本场景基本触发不了**。请用①的「诊断」确认端口状态，然后走录屏投屏。
+> **CarLife 停在「等待 Car+」**：说明 7 个端口没监听，也就是 Car+ 还没进 CarLife 模式。
+> 先点①「**尝试进 CarLife**」——它会枚举 `com.oplus.ocar` 里所有可疑入口、逐个拉起并每 2.5 秒探一次端口，命中就停。
+> 若全部未命中，点「枚举组件」看全量类名，把可疑的填进 Activity 输入框手动试。仍不行再走录屏投屏。
 
-> **拉不起 Car+**：部分 ColorOS 版本不允许外部 App 拉起 Car+ 的 CarlifeActivity；即使拉起界面，也不代表进入 CarLife 模式。诊断会告诉你安装状态与端口监听情况。
+> **「未找到可拉起界面」**：说明 Car+ 没有 LAUNCHER 入口（它是系统组件），且默认的 `com.oplus.ocar.CarlifeActivity` 在当前版本不存在或未导出。
+> 点「枚举组件」列出真实类名即可定位；`resolveActivity` 对未导出组件一律返回 null，必须靠枚举才看得到。
 
 ## 调试功能
+
+### Car+ 本地预览（不接仪表也能验证）
+
+`CastEngine` 把收到的每一帧先旁路给本地解码器（`H264Decoder`），在「Car+ 本地预览」卡里直接显示，
+**完全不需要极核在线**。此时状态显示 `RUNNING_LOCAL_ONLY`，含义是"只采集、不推流"。
+
+这样能把问题分段定位：
+
+| 预览卡现象 | 说明 |
+| --- | --- |
+| 一直「等待 SPS/PPS」 | CarLife 握手没走完，或画布协商失败 |
+| 出画但花屏 | 丢帧或解密不完整，看日志里的「解密失败」计数 |
+| 出画正常、仪表黑屏 | 手机侧链路已通，问题在极核推流段（Wi-Fi、握手、型号） |
+
+### debug 调试版
+
+`dev-latest` 里除了正式签名的预览包，还附带 `CarWithin-debug.apk`：
+
+- debug 签名，`versionName` 带 `-debug` 后缀，可 `adb logcat -s CarWithin` 抓全量日志。
+- 与正式版**同包名**，安装前必须先卸载正式版（签名不同无法覆盖）。
+- 适合排查崩溃堆栈、`NetworkOnMainThreadException`、MediaCodec 初始化失败等只能在 logcat 里看到的问题。
 
 ### 测试图验证出画
 
@@ -127,14 +155,18 @@
 ## 工作原理
 
 ```
-来源 A（推荐）：手机屏幕 (MediaProjection 录屏) → MediaCodec 编码 H.264（不依赖车机）
-来源 B（实验）：OPPO Car+ → CarLife 七端口 → AES 解密 → H.264
-               ⚠ 需 Car+ 已进入 CarLife 模式（通常要先连 ICCOA/CarLife+/亿连车机）
+来源 A（通用）：手机屏幕 (MediaProjection 录屏) → MediaCodec 编码 H.264
+来源 B（零转码）：OPPO Car+ → 本机 127.0.0.1 七个端口 → AES 解密 → H.264
+                 ▲ 本 App 冒充车机(HU)连入；Car+ 需先被拉进 CarLife 模式
         ↓ VideoFrame
-CastEngine → ZeehoOutput → ZeehoConnection（PXC/TCP 四端口）
+CastEngine ─┬→ 本地预览（H264Decoder → Bitmap，仪表不在线也能看）
+            └→ ZeehoOutput → ZeehoConnection（PXC/TCP 四端口）
         ↓
 极核 AE4 MAX2+ 仪表出画
 ```
+
+本地预览是刻意解耦的：仪表不在线时 `CastEngine` 只记一条日志继续采集，
+状态显示 `RUNNING_LOCAL_ONLY`，帧照常进解码器。所以调 Car+ 链路完全不需要极核主机参与。
 
 本项目的协议来自三个已有工作的交叉验证：
 
@@ -142,10 +174,11 @@ CastEngine → ZeehoOutput → ZeehoConnection（PXC/TCP 四端口）
 | --- | --- | --- |
 | [CarWithin](https://github.com/xmz28/CarWithin) | iOS 端完整逆向极核 6.2 寸 PXC/TCP 输出协议 | 逐行移植 `Zeeho62Legacy.swift` 的握手、媒体协商与视频帧封装到 Java |
 | [ninebot_pro](https://github.com/xmz28/ninebot_pro) | 安卓端已验证可驱动极核 6.2 寸（1024×480 @25 FPS） | 确认安卓屏幕采集 + 该规格可行，沿用其参数 |
-| [CarNine-Ninebot](https://github.com/xiaolu5hao/CarNine-Ninebot) | 安卓端接收 OPPO Car+ 的 H.264（CarLife 车机端） | 移植其 `CarLifeLink` 七端口协议栈作为实验来源；CarNine 配的是九号 CarLife 车机，本项目的极核仪表不是 |
+| [CarNine-Ninebot](https://github.com/xiaolu5hao/CarNine-Ninebot) | 安卓端冒充 CarLife 车机（HU），收 OPPO Car+ 的 H.264 再转九号 UDP | 移植其 `CarLifeLink` 七端口协议栈与 `H264Decoder`；九号仪表只参与**输出侧**，输入端同样是它自己冒充 HU——证明不需要真 CarLife 车机 |
 
-ICCOA CarLink 因依赖专有 `icar-sdk.dex` 无法开源移植，CarLife 作为实验替代。但 CarLife 同样要求手机端
-连上车机 HU 才建端口——极核仪表是私有 PXC 协议、不是 CarLife 车机，因此**主推不依赖配对的录屏路线**。
+ICCOA CarLink 因依赖专有 `icar-sdk.dex` 无法开源移植，CarLife 作为替代路线。
+CarLife 的 HU 端由本 App 本人扮演（跑在 127.0.0.1 回环上），因此**不依赖任何车机配对**；
+唯一的外部变量是能否把 Car+ 拉进 CarLife 模式，故提供了组件枚举与自动尝试。
 详见 [ICCOA 现状](docs/ICCOA-STATUS.md)。
 
 ## 仪表与传输
@@ -174,7 +207,7 @@ ICCOA CarLink 因依赖专有 `icar-sdk.dex` 无法开源移植，CarLife 作为
 | M0 | 工程骨架、协议帧、RSA 身份、网段发现 | 已落地 |
 | M1 | 极核协议闭环：屏幕采集 → 仪表出画 | 已实现，待真机验证 |
 | M2 | 稳定性：断线重连、切后台保活、日志与统计 | 进行中 |
-| M3 | CarLife 直连 OPPO Car+（实验） | 协议栈已实现；受「Car+ 需配对车机」限制，多数场景不可用 |
+| M3 | CarLife 直连 OPPO Car+（零转码） | 协议栈 + 本地预览已实现；待验证各 ColorOS 版本能否拉起 Car+ 进 CarLife 模式 |
 | M4 | 其他极核型号 / 固件适配 | 待真机取证 |
 | M5 | ICCOA CarLink / 华为 HiCar 直连 | 受专有 SDK 阻塞 |
 
@@ -192,9 +225,11 @@ ICCOA CarLink 因依赖专有 `icar-sdk.dex` 无法开源移植，CarLife 作为
 
 **支持投 ICCOA / Car+ / HiCar 的内容吗？** 支持"投这些内容在手机屏幕上显示的画面"——通过录屏，不依赖车机配对。CarLife 直连是额外实验项。
 
-**CarLife 直连和录屏投屏选哪个？** 默认用**录屏投屏**：通用、不挑车机。CarLife 直连虽零转码、免录屏授权，但它要求 Car+ 先连上 ICCOA/CarLife+/亿连车机才会开 7 端口；极核 AE4 MAX2+ 的仪表不是这类车机，通常触发不了。用①的「诊断」看端口状态：7 个全绿才可用，否则走录屏。
+**CarLife 直连和录屏投屏选哪个？** 想省一次编码、要更清晰的画面就选 CarLife 直连（零转码），前提是能把 Car+ 拉进 CarLife 模式——点①「尝试进 CarLife」自动试探。不想折腾就用**录屏投屏**：通用、不挑车机、不依赖 Car+。
 
-**为什么在 App 里拉不起 Car+？** Car+ 的 CarlifeActivity 是否允许外部拉起取决于 ColorOS 版本；即便拉起界面，若 Car+ 未连车机也不会进入 CarLife 模式、不会监听端口。这不是本 App 的 bug，而是 Car+ 的设计前提。录屏路线不受影响。
+**CarLife 链路怎么自查？** 三步：①「诊断」看 7 端口；②「尝试进 CarLife」让端口变绿；③点「CarLife 直连」后看**本地预览卡**是否出画。本地预览不需要极核在线，出画即说明 Car+ → 本 App 这段已经通了，剩下的只是把流推给仪表。
+
+**为什么在 App 里拉不起 Car+？** `com.oplus.ocar` 没有 LAUNCHER 入口，且 `CarlifeActivity` 这个类名在不同 Car+ 版本里会变，`resolveActivity` 对未导出组件又一律返回 null。所以提供了「枚举组件」直接读 `PackageInfo.activities` 拿真实类名，再「尝试进 CarLife」逐个拉起验证。全部入口都不行的话，说明该 ColorOS 版本把入口藏进了系统互联流程，此时用录屏路线。
 
 **APK 是谁签名的？** 正式签名（RSA-2048，有效期至 2056 年），可直接安装、可覆盖升级。私钥不在仓库；如需换成自己的密钥，见 [docs/RELEASE.md](docs/RELEASE.md)。若此前装过旧版 debug 包，先卸载再装。
 

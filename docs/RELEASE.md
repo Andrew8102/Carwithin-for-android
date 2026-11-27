@@ -7,8 +7,17 @@
 | 触发 | 产物 | 版本号 | 发布位置 |
 | --- | --- | --- | --- |
 | **推送 `v*` tag**（正式发版） | 正式版 | tag 去掉 `v`，如 `v0.3.0` → `0.3.0` | 独立 Release（非 prerelease） |
-| **推送 main**（日常开发） | 开发预览版 | `carwithin.version` + `-dev.<构建号>`，如 `0.3.0-dev.42` | 滚动更新 `dev-latest` prerelease |
+| **推送 main**（日常开发） | 开发预览版 **+ debug 包** | `carwithin.version` + `-dev.<构建号>`，如 `0.4.0-dev.42`；debug 包再加 `-debug` | 滚动更新 `dev-latest` prerelease |
 | **手动触发** | 填了 tag → 正式版；留空 → 预览版 | 同上 | 同上 |
+
+预览版会同时挂两个 APK：
+
+| 文件 | 签名 | 用途 |
+| --- | --- | --- |
+| `carwithin-for-android-dev.apk` | 正式密钥（配置了 Secrets 时） | 可直接覆盖安装正式版 |
+| `CarWithin-debug.apk` | debug 密钥 | 连 adb / `logcat -s CarWithin` 抓全量日志；**与正式版同包名，装前必须卸载** |
+
+debug 包由 `:app:assembleDebug` 构建，`versionNameSuffix = "-debug"`，只在预览场景产出，正式发版不带。
 
 正式发版：
 

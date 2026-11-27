@@ -41,6 +41,11 @@ public final class CastSession {
         this.listener = listener;
     }
 
+    /** 注册本地预览帧旁路（不需要仪表在线，CarLife 收到的帧会先走这里）。 */
+    public void setFrameTap(CastEngine.FrameTap tap) {
+        engine.setFrameTap(tap);
+    }
+
     /** 应用车型配置与测试图设置；仅在空闲时生效。 */
     public void configure(Context context) {
         if (active.get()) return;
@@ -120,6 +125,11 @@ public final class CastSession {
 
     public boolean isActive() {
         return active.get();
+    }
+
+    /** 仪表输出是否已建立；false 表示当前只在本地预览、不推极核。 */
+    public boolean outputReady() {
+        return engine.isOutputReady();
     }
 
     public VehicleProfile profile() {
