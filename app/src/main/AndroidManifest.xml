@@ -59,6 +59,9 @@
                 <action android:name="com.github.carwithinforandroid.DEBUG.STOP" />
                 <action android:name="com.github.carwithinforandroid.DEBUG.STATE" />
                 <action android:name="com.github.carwithinforandroid.DEBUG.DIAGNOSE" />
+                <!-- 新增命令必须在这里登记，否则 am broadcast 只会 Enqueued、不会投递 -->
+                <action android:name="com.github.carwithinforandroid.DEBUG.P2P_BUILD" />
+                <action android:name="com.github.carwithinforandroid.DEBUG.P2P_SCAN" />
             </intent-filter>
         </receiver>
     </application>

@@ -35,9 +35,26 @@ public final class ZeehoDiscovery {
         int self = Integer.parseInt(parts[3]);
 
         List<String> candidates = new ArrayList<>();
-        candidates.add(prefix + "1");
         for (int i = 1; i <= 254; i++) {
             if (i != self) candidates.add(prefix + i);
+        }
+
+        // 仪表在 P2P 组里是 GO，地址几乎总是网段第一个；CarWithin 的 Swift 版也是先试 .1。
+        // 先单独敲一次 .1，命中就不用再扫 253 个地址（省 8 秒）。
+        if (self != 1) {
+            try (Socket socket = new Socket()) {
+                if (network != null) {
+                    try {
+                        network.bindSocket(socket);
+                    } catch (Exception ignored) {
+                        // 绑不上就走默认路由
+                    }
+                }
+                socket.connect(new InetSocketAddress(prefix + "1", port), 600);
+                return Collections.singletonList(prefix + "1");
+            } catch (Exception ignored) {
+                // .1 不是仪表，退回全段扫描
+            }
         }
 
         CopyOnWriteArrayList<String> found = new CopyOnWriteArrayList<>();
