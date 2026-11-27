@@ -154,7 +154,7 @@ public class MainActivity extends Activity {
         LinearLayout card = card("① 拉起车机互联界面（投屏前）");
 
         TextView tip = new TextView(this);
-        tip.setText("手机通常不会自动显示 Car+ / CarWith 界面。先在这里拉起它，让它在本地监听投屏端口，再开始投屏。");
+        tip.setText("录屏投屏无需此步。CarLife 投屏要求 Car+ 先进入 CarLife 模式（通常需连接 ICCOA/CarLife+/亿连车机）；极核仪表不是这类车机，可能无法满足。点「诊断」查看端口状态。");
         tip.setTextSize(11f);
         tip.setTextColor(Color.parseColor(MUTED));
         tip.setLineSpacing(0, 1.3f);
@@ -170,16 +170,15 @@ public class MainActivity extends Activity {
         btnRow.setOrientation(LinearLayout.HORIZONTAL);
         Button launchBtn = button("拉起界面", "#6366F1");
         launchBtn.setOnClickListener(v -> doLaunch());
+        Button diagBtn = button("诊断", "#0EA5E9");
+        diagBtn.setOnClickListener(v -> doDiagnose());
         Button detectBtn = button("检测安装", "#475569");
         detectBtn.setOnClickListener(v -> detectInstalled());
-        LinearLayout.LayoutParams lp1 = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        lp2.leftMargin = dp(8);
-        launchBtn.setLayoutParams(lp1);
-        detectBtn.setLayoutParams(lp2);
+        launchBtn.setLayoutParams(rowParams());
+        diagBtn.setLayoutParams(rowParams());
+        detectBtn.setLayoutParams(rowParams());
         btnRow.addView(launchBtn);
+        btnRow.addView(diagBtn);
         btnRow.addView(detectBtn);
         card.addView(btnRow);
 
@@ -206,6 +205,23 @@ public class MainActivity extends Activity {
         String activity = activityInput.getText().toString().trim();
         VehicleProfile.setLaunchPackage(this, pkg);
         launchResult.setText(CarAppLauncher.launch(this, pkg, activity));
+    }
+
+    private void doDiagnose() {
+        String pkg = packageInput.getText().toString().trim();
+        String activity = activityInput.getText().toString().trim();
+        if (pkg.isEmpty()) {
+            pkg = VehicleProfile.launchPackage(this);
+            packageInput.setText(pkg);
+        }
+        launchResult.setText(CarAppLauncher.diagnose(this, pkg, activity));
+    }
+
+    private LinearLayout.LayoutParams rowParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.leftMargin = dp(6);
+        return lp;
     }
 
     private void detectInstalled() {
@@ -235,7 +251,7 @@ public class MainActivity extends Activity {
         });
         card.addView(startButton);
 
-        carlifeButton = button("CarLife 投屏（接收 Car+，无需录屏）", "#14B8A6");
+        carlifeButton = button("CarLife 直连（实验·需 Car+ 进入车机模式）", "#14B8A6");
         carlifeButton.setOnClickListener(v -> {
             if (VehicleProfile.autoLaunch(this)) {
                 doLaunch();
@@ -255,7 +271,7 @@ public class MainActivity extends Activity {
         card.addView(stopButton);
 
         TextView hint = new TextView(this);
-        hint.setText("步骤：仪表开启投屏 → 手机连仪表 Wi-Fi → 拉起车机界面。录屏投屏通用；CarLife 投屏接收 Car+ 原生 H.264（零转码、免录屏授权，需先打开 Car+）；测试图用于确认仪表能出画。");
+        hint.setText("推荐：录屏投屏（通用、不依赖车机配对）。CarLife 直连为零转码实验功能，仅在 Car+ 已连接 ICCOA/CarLife+/亿连车机、7 端口监听时可用；可用①的「诊断」确认。测试图用于确认仪表能出画。");
         hint.setTextSize(11f);
         hint.setTextColor(Color.parseColor(MUTED));
         hint.setLineSpacing(0, 1.35f);
@@ -435,7 +451,7 @@ public class MainActivity extends Activity {
 
     private void addFooter(LinearLayout root) {
         TextView footer = new TextView(this);
-        footer.setText("v0.2.0  ·  AGPL-3.0\n独立社区项目 · 与厂商无官方关联");
+        footer.setText("v" + appVersion() + "  ·  AGPL-3.0\n独立社区项目 · 与厂商无官方关联");
         footer.setTextSize(11f);
         footer.setTextColor(Color.parseColor(BORDER));
         footer.setGravity(Gravity.CENTER);
@@ -532,7 +548,7 @@ public class MainActivity extends Activity {
         if ("STREAMING".equals(status)) return "视频流已推送至仪表，操作请在手机上完成。";
         if (status.startsWith("ERROR")) return "发生错误，请查看下方运行日志与 docs/TEST-PLAN.md。";
         if (status.startsWith("CARLIFE")) {
-            return "CarLife 链路：等待 Car+ 在本机监听 7 个端口并完成握手。请确认已打开 OPPO Car+ 且未连接其他车机。";
+            return "CarLife 实验链路：等待 Car+ 监听 7 个端口。需 Car+ 已进入 CarLife 模式（通常要先连 ICCOA/CarLife+/亿连车机）。极核仪表非此类车机，若一直卡住请用录屏投屏。";
         }
         if ("STARTING".equals(status) || "WAITING_DASHBOARD".equals(status)) {
             return "正在与仪表协商，请确认仪表已开启投屏且未连其他手机。";
@@ -548,6 +564,15 @@ public class MainActivity extends Activity {
     }
 
     /* ---------------- 工具 ---------------- */
+
+    /** 从包管理器读取构建时注入的真实版本号，避免硬编码导致界面版本不更新。 */
+    private String appVersion() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            return "unknown";
+        }
+    }
 
     private LinearLayout card(String title) {
         LinearLayout card = new LinearLayout(this);

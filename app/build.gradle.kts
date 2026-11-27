@@ -2,6 +2,38 @@ plugins {
     id("com.android.application")
 }
 
+/**
+ * 版本号从发布 tag 自动推导，避免每次手动改 build.gradle.kts 导致 APK 内版本号不变。
+ * 优先级：RELEASE_TAG 环境变量（CI 打 tag 时注入） > git describe > 默认 0.3.0。
+ * versionCode 由语义化版本计算：major*10000 + minor*100 + patch（0.3.0 -> 300）。
+ */
+data class AppVersion(val name: String, val code: Int)
+
+fun resolveVersion(): AppVersion {
+    val raw = System.getenv("RELEASE_TAG")
+        ?.takeIf { it.isNotBlank() }
+        ?: runCatching {
+            val process = ProcessBuilder("git", "describe", "--tags", "--abbrev=0")
+                    .directory(rootDir)
+                    .redirectErrorStream(true)
+                    .start()
+            val output = process.inputStream.bufferedReader().readText().trim()
+            process.waitFor()
+            output.takeIf { process.exitValue() == 0 && it.isNotBlank() }
+        }.getOrNull()
+        ?: "v0.3.0"
+
+    val clean = raw.trim().removePrefix("v").substringBefore("-")
+    val parts = clean.split(".").mapNotNull { it.toIntOrNull() }
+    if (parts.isEmpty()) return AppVersion(clean.ifBlank { "0.3.0" }, 300)
+    val major = parts.getOrElse(0) { 0 }
+    val minor = parts.getOrElse(1) { 0 }
+    val patch = parts.getOrElse(2) { 0 }
+    return AppVersion("$major.$minor.$patch", major * 10000 + minor * 100 + patch)
+}
+
+val appVersion = resolveVersion()
+
 android {
     namespace = "com.github.carwithinforandroid"
     compileSdk {
@@ -12,8 +44,8 @@ android {
         applicationId = "com.github.carwithinforandroid"
         minSdk = 29
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = appVersion.code
+        versionName = appVersion.name
     }
 
     compileOptions {

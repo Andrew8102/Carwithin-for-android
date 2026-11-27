@@ -5,7 +5,7 @@
 ```
 手机互联来源 (PhoneVideoSource)
   ├─ ScreenCaptureSource（MediaProjection 录屏，通用，已实现）
-  ├─ CarLifePhoneSource（OPPO Car+ 七端口，零转码，已实现）
+  ├─ CarLifePhoneSource（OPPO Car+ 七端口，零转码，实验性/需车机配对）
   ├─ TestPatternSource（测试图，免授权，已实现）
   ├─ IccoaPhoneSource（专有 icar-sdk.dex，槽位）
   └─ HiCarPhoneSource（华为，占位）

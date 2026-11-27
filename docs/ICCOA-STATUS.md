@@ -24,20 +24,31 @@ ICCOA CarLink 是覆盖小米 CarWith、OPPO Car+ 车联、vivo Jovi InCar 的�
 3. 在 `IccoaPhoneSource` 中实现发现、配对码、连接状态、视频帧回调。
 4. 把视频帧交给 `CastEngine`，由 `ZeehoOutput` 送到仪表。
 
-在没有 SDK 前，阶段一使用 CarLife 栈接通 OPPO Car+；这条链路不需要专有 SDK。
+在没有 SDK 前，阶段一尝试用 CarLife 栈接通 OPPO Car+；这条链路不需要专有 SDK，但受下节限制。
 
-## 阶段一现状：CarLife 已实现（v0.3.0）
+## 阶段一现状：CarLife 协议栈已实现，但场景受限（v0.3.0）
 
-OPPO Car+ 已改走 CarLife 车机端协议栈，不依赖 ICCOA SDK：
+协议栈本身不依赖 ICCOA SDK：
 
 - `sources/carlife/CarLifeLink.java`：自 CarNine 完整移植，七端口连接 + 版本协商 + MD5 身份证明 + RSA/AES 内容加密 + 视频帧接收，仅依赖 JDK。
 - `sources/carlife/H264.java`：Annex-B / AVCC 转换与关键帧识别。
 - `sources/carlife/CarLifePhoneSource.java`：把 CarLifeLink 包装成 `PhoneVideoSource`，接入 CastEngine。
-- UI「② 投屏控制」新增「CarLife 投屏」按钮，免录屏授权。
+- UI「①」新增「诊断」按钮（安装 / 版本 / 各 Activity / 7 端口监听状态），「②」CarLife 直连标注为实验性。
 
-**能力边界**：CarLife 覆盖 OPPO / 一加 / realme 等 ColorOS 带「Car+ 车联」的机型；
-小米 CarWith、vivo Jovi InCar 虽同属 ICCOA 生态，但其手机端是否开放等价 CarLife 端口未验证，
-暂用录屏路线。ICCOA 直连仍是长期方向，待合法 SDK 可用时启用 `IccoaPhoneSource` 槽位。
+### 关键限制：Car+ 需要车机 HU 才会进入 CarLife 模式
+
+CarLife 的角色是固定的：**MD（手机端）= Car+ 内的百度 CarLife+ 组件，负责编码并监听 7 个本机端口；
+HU（车机端）= 连接这些端口的一方**。组件由 Car+ 通过 AIDL 拉起，只有当 Car+ 连上支持
+ICCOA / 百度 CarLife+ / 亿连的**车机端**时，才会交出镜像 Surface、建立端口。
+
+本项目目标仪表极核 AE4 MAX2+ 走私有 PXC/TCP 协议，**不是 CarLife 车机**。因此在本场景下：
+
+- 强行 `startActivity(com.oplus.ocar/.CarlifeActivity)` 未必能让 Car+ 进入 CarLife 模式（取决于 ColorOS 版本）；
+- 即使 App 界面被拉起，7 端口也不会监听，CarLifeLink 会一直停在「等待手机端监听」直到超时；
+- CarNine 之所以能跑通，是因为它配的是**九号仪表**（该场景仪表承担了 CarLife 车机角色）。
+
+**结论**：CarLife 直连在本项目属实验性、多数情况不可用。App 内「诊断」可确认 7 端口状态；
+未监听请走不依赖车机配对的**录屏投屏**。ICCOA 直连仍是长期方向，待合法 SDK 可用时启用 `IccoaPhoneSource` 槽位。
 
 ## 华为 HiCar
 

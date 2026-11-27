@@ -42,12 +42,20 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 -d > release.jks
           fi
 
+      - name: Resolve release tag for versioning
+        id: ver
+        run: |
+          TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "使用版本 tag: $TAG"
+
       - name: Build release APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEYSTORE_TYPE: ${{ secrets.KEYSTORE_TYPE || 'PKCS12' }}
+          RELEASE_TAG: ${{ steps.ver.outputs.tag }}
         run: ./gradlew :app:assembleRelease --no-daemon
 
       - name: Prepare artifact
