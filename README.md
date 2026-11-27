@@ -20,9 +20,10 @@
 
 | 平台与版本 | 系统要求 | 下载入口 | 安装方式 |
 | --- | --- | --- | --- |
-| **Android 0.3.0** | Android 10+（API 29），建议 Android 13+ | [最新 Release](https://github.com/Andrew8102/Carwithin-for-android/releases/latest) | 正式签名，可直接安装 |
+| **Android 0.3.0**（正式版） | Android 10+（API 29），建议 Android 13+ | [最新 Release](https://github.com/Andrew8102/Carwithin-for-android/releases/latest) | 正式签名，可直接安装 |
+| **开发预览版**（每个提交自动构建） | 同上 | [dev-latest](https://github.com/Andrew8102/Carwithin-for-android/releases/tag/dev-latest) | 同一套签名，可覆盖安装；版本号形如 `0.3.1-dev.42` |
 
-- APK 由 GitHub Actions 自动构建，`v*` tag 推送或手动触发 Release workflow 生成新包，见 [docs/RELEASE.md](docs/RELEASE.md)。
+- APK 由 GitHub Actions 自动构建：推 `v*` tag 发正式版，推 main 自动更新 `dev-latest` 预览版，见 [docs/RELEASE.md](docs/RELEASE.md)。
 - 正式签名（RSA-2048）；若你此前装过 debug 签名的旧包，请先卸载再装。
 - 只有「录屏投屏」会弹出系统录屏授权；CarLife 投屏与测试图无需录屏授权。
 
