@@ -274,9 +274,11 @@ cmd_logs() {
   "$ADB" logcat -c
   ( sleep "$secs" ) | "$ADB" logcat -v time 2>/dev/null | grep -iE "carwithin|carlife|oplus.ocar|AndroidRuntime|MediaCodec|libc.*Fatal" &
   local lp=$!
-  local last=""
-  for _ in $(seq 1 $((secs/5))); do
+  local last="" elapsed=0
+  # macOS 没有 seq，别用 $(seq 1 N)
+  while [ "$elapsed" -lt "$secs" ]; do
     sleep 5
+    elapsed=$((elapsed + 5))
     local cur; cur=$(listening_ports | tr '\n' ' ')
     if [ "$cur" != "$last" ]; then
       echo "[ports] $(echo "$cur" | wc -w) 个监听：$cur"
@@ -370,10 +372,24 @@ cmd_hotspot() {
   fi
   require_device
   echo "写入热点 SSID=$ssid 密码长度=${#psk}"
+  # adb shell 会把后面所有参数拼成一条命令交给设备端 sh 再解析一遍，
+  # 含空格的值不加引号会被拆成两个 extra。
+  local qssid qpsk
+  qssid="$(quote_for_device "$ssid")"
+  qpsk="$(quote_for_device "$psk")"
   "$ADB" shell am broadcast -a "com.github.carwithinforandroid.DEBUG.HOTSPOT" \
-    -p "$APP_PKG" -f 0x00000020 --es ssid "$ssid" --es psk "$psk" >/dev/null 2>&1
+    -p "$APP_PKG" -f 0x00000020 --es ssid "$qssid" --es psk "$qpsk" >/dev/null 2>&1
   echo "已写入，验证中…"
   run_timeout 4 "$ADB" logcat -s CarWithin 2>/dev/null | tr -d '\r' | grep -E "热点|HOTSPOT" | head -5
+}
+
+# 值里带空格时补一层单引号，交给设备端 sh 解析
+quote_for_device() {
+  if printf '%s' "$1" | grep -q '[[:space:]]'; then
+    printf "'%s'" "$1"
+  else
+    printf '%s' "$1"
+  fi
 }
 
 case "${1:-}" in
