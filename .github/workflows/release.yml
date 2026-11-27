@@ -72,8 +72,9 @@ jobs:
             SUFFIX=""
             OUT_NAME="carwithin-for-android-${TAG}.apk"
           else
-            # 预览版基线取最近一个 tag，取不到就退回默认版本。
-            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.3.0")
+            # 预览版不注入 RELEASE_TAG：基线由 gradle.properties 的 carwithin.version 决定，
+            # 若该版本不大于最近 tag，Gradle 会自动 patch +1。
+            TAG=""
             SUFFIX="-dev.${{ github.run_number }}"
             OUT_NAME="carwithin-for-android-dev.apk"
           fi
@@ -85,7 +86,7 @@ jobs:
             echo "out_name=$OUT_NAME"
           } >> "$GITHUB_OUTPUT"
 
-          echo "基线: $TAG | 后缀: ${SUFFIX:-无} | 正式版: $IS_RELEASE | 文件名: $OUT_NAME"
+          echo "基线 tag: ${TAG:-<由 gradle.properties 决定>} | 后缀: ${SUFFIX:-无} | 正式版: $IS_RELEASE | 文件名: $OUT_NAME"
 
       - name: Build release APK
         env:

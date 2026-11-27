@@ -3,37 +3,52 @@ plugins {
 }
 
 /**
- * 版本号从发布 tag 自动推导，避免每次手动改 build.gradle.kts 导致 APK 内版本号不变。
- * 优先级：RELEASE_TAG 环境变量（CI 打 tag 时注入） > git describe > 默认 0.3.0。
- * versionCode 由语义化版本计算：major*10000 + minor*100 + patch（0.3.0 -> 300）。
+ * 版本号自动推导，避免手动改 build.gradle.kts 导致 APK 内版本号不变。
  *
- * 预览版（main 每次推送）额外注入 VERSION_SUFFIX，如 "-dev.42"，得到 0.3.0-dev.42；
- * versionCode 与同基线正式版保持一致，保证预览版与正式版可以互相覆盖安装。
+ * 正式版（CI 打 tag 时注入 RELEASE_TAG）：版本号 = tag，如 v0.3.0 -> 0.3.0。
+ * 预览版（main 每次推送，不注入 RELEASE_TAG）：版本号 = gradle.properties 的
+ * carwithin.version + VERSION_SUFFIX（如 -dev.42）-> 0.3.0-dev.42；
+ * 若声明的版本不大于最近 tag（说明已发布过），自动 patch +1，
+ * 保证版本号永远比最近发布版本新，不会看起来"没更新"。
+ *
+ * versionCode 由语义化版本计算：major*10000 + minor*100 + patch（0.3.0 -> 300），
+ * 预览版与同基线正式版一致，两者可以互相覆盖安装。
  */
 data class AppVersion(val name: String, val code: Int)
 
-fun resolveVersion(): AppVersion {
-    val raw = System.getenv("RELEASE_TAG")
-        ?.takeIf { it.isNotBlank() }
-        ?: runCatching {
-            val process = ProcessBuilder("git", "describe", "--tags", "--abbrev=0")
-                    .directory(rootDir)
-                    .redirectErrorStream(true)
-                    .start()
-            val output = process.inputStream.bufferedReader().readText().trim()
-            process.waitFor()
-            output.takeIf { process.exitValue() == 0 && it.isNotBlank() }
-        }.getOrNull()
-        ?: "v0.3.0"
-
+fun semverParts(raw: String): IntArray {
     val clean = raw.trim().removePrefix("v").substringBefore("-")
     val parts = clean.split(".").mapNotNull { it.toIntOrNull() }
+    return intArrayOf(parts.getOrElse(0) { 0 }, parts.getOrElse(1) { 0 }, parts.getOrElse(2) { 0 })
+}
+
+fun codeOf(parts: IntArray): Int = parts[0] * 10000 + parts[1] * 100 + parts[2]
+
+fun gitDescribeTag(): String? = runCatching {
+    val process = ProcessBuilder("git", "describe", "--tags", "--abbrev=0")
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+    val output = process.inputStream.bufferedReader().readText().trim()
+    process.waitFor()
+    output.takeIf { process.exitValue() == 0 && it.isNotBlank() }
+}.getOrNull()
+
+fun resolveVersion(): AppVersion {
     val suffix = System.getenv("VERSION_SUFFIX")?.trim()?.takeIf { it.isNotBlank() } ?: ""
-    if (parts.isEmpty()) return AppVersion(clean.ifBlank { "0.3.0" } + suffix, 300)
-    val major = parts.getOrElse(0) { 0 }
-    val minor = parts.getOrElse(1) { 0 }
-    val patch = parts.getOrElse(2) { 0 }
-    return AppVersion("$major.$minor.$patch$suffix", major * 10000 + minor * 100 + patch)
+    val envTag = System.getenv("RELEASE_TAG")?.takeIf { it.isNotBlank() }
+    val declared = project.findProperty("carwithin.version")?.toString()?.takeIf { it.isNotBlank() } ?: "0.3.0"
+
+    var parts = semverParts(envTag ?: declared)
+
+    if (envTag == null) {
+        val latest = gitDescribeTag()?.let { semverParts(it) }
+        if (latest != null && codeOf(parts) <= codeOf(latest)) {
+            parts = intArrayOf(latest[0], latest[1], latest[2] + 1)
+        }
+    }
+
+    return AppVersion("${parts[0]}.${parts[1]}.${parts[2]}$suffix", codeOf(parts))
 }
 
 val appVersion = resolveVersion()
