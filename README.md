@@ -104,6 +104,7 @@ app/src/main/java/com/github/carwithinforandroid/
 
 - [开发路线图](docs/ROADMAP.md)：M0 骨架 → M1 协议闭环 → M2 OPPO 接通 → M3 稳定性 → M4 ICCOA → M5 HiCar
 - [真机测试计划](docs/TEST-PLAN.md)：需要回传的日志、抓包与验收清单
+- [自动构建与发布](docs/RELEASE.md)：打 tag 自动构建 APK 并发布到 Releases
 - [贡献指南](CONTRIBUTING.md)：协议取证、代码规范与提交方式
 
 ## 已知限制
