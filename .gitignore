@@ -16,3 +16,5 @@ keystore.properties
 reference/
 
 .tmp-logs/
+
+.tmp-proto/

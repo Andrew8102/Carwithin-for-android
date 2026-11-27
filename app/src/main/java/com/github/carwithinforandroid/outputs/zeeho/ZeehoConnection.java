@@ -2,6 +2,7 @@ package com.github.carwithinforandroid.outputs.zeeho;
 
 import android.util.Base64;
 
+import com.github.carwithinforandroid.core.LogBus;
 import com.github.carwithinforandroid.core.VideoFrame;
 
 import org.json.JSONException;
@@ -12,19 +13,23 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 极核 AE4 MAX2+ 6.2 寸四端口会话骨架。
- * 帧格式与主要命令已实现；媒体协商中的若干分支仍需真机校正，见 docs/ZEEHO-PROTOCOL.md。
+ * 极核 AE4 MAX2+ 6.2 寸 PXC/TCP 会话。
+ * 逐行对照 CarWithin App/Zeeho62Legacy.swift 的 TailingConnection（zeeho62 profile）移植。
  */
 public final class ZeehoConnection {
 
@@ -38,7 +43,7 @@ public final class ZeehoConnection {
     private static final int CMD_DEVICE_INFO = 0x10010;
     private static final int CMD_TIME = 0x10450;
     private static final int CMD_SESSION_START = 0x20000;
-    private static final int CMD_MIRROR_START = 0x20590;
+    private static final int CMD_MIRROR = 0x20590;
     private static final int CMD_KEEPALIVE = 0x70000000;
 
     private static final int AUX_CONFIG = 0x10;
@@ -46,51 +51,87 @@ public final class ZeehoConnection {
     private static final int AUX_MEDIA_START = 0x70;
     private static final int AUX_MEDIA_START_ACK = 0x71;
     private static final int AUX_PULL_FRAME = 0x72;
-    private static final int AUX_PORT_INFO = 0x30;
+
+    private static final int WIDTH = 1024;
+    private static final int HEIGHT = 480;
+    private static final int FPS = 25;
 
     private final String localIp;
     private String targetIp;
     private final ZeehoIdentity identity;
     private final String packageName;
+    private final String phoneModel;
+    private final String osVersion;
     private final int versionCode;
 
     private final ExecutorService pool = Executors.newCachedThreadPool();
+    private final ScheduledExecutorService heartbeat = Executors.newSingleThreadScheduledExecutor();
     private final List<ServerSocket> servers = new CopyOnWriteArrayList<>();
+    private final List<Socket> peers = new CopyOnWriteArrayList<>();
     private final BlockingQueue<Boolean> frameRequests = new LinkedBlockingQueue<>();
 
     private volatile boolean closed;
     private volatile String huid;
+    private volatile byte[] signedHuid;
+    private volatile boolean configured;
     private volatile boolean mediaReady;
     private volatile boolean sentPrefix;
     private volatile Socket videoSocket;
+    private volatile Socket reverseControl;
     private volatile String state = "IDLE";
+    private volatile int keepaliveId = 7;
 
     public ZeehoConnection(String localIp, String targetIp, ZeehoIdentity identity,
-                           String packageName, int versionCode) {
+                           String packageName, int versionCode, String phoneModel, String osVersion) {
         this.localIp = localIp;
         this.targetIp = targetIp;
         this.identity = identity;
         this.packageName = packageName;
         this.versionCode = versionCode;
+        this.phoneModel = phoneModel;
+        this.osVersion = osVersion;
     }
 
     public void start() throws IOException, GeneralSecurityException {
         if (targetIp == null || targetIp.isEmpty()) {
             List<String> found = ZeehoDiscovery.discover(localIp, DISCOVERY_PORT);
-            if (found.isEmpty()) throw new IOException("未发现仪表，请确认已连仪表 Wi-Fi 且已开启投屏");
+            if (found.isEmpty()) {
+                throw new IOException("未发现仪表：请连接仪表 Wi-Fi 并在仪表上开启投屏");
+            }
             targetIp = found.get(0);
+            LogBus.log("发现仪表 " + targetIp);
         }
-        announce();
+
+        // 先监听三个反向回连端口，再请求仪表发起连接。
         listen(CONTROL_PORT, this::handleControl);
         listen(AUX_PORT, this::handleAuxiliary);
         listen(VIDEO_PORT, this::handleVideo);
-        state = "WAITING_DASHBOARD";
+        LogBus.log("已监听 " + localIp + ":" + CONTROL_PORT + "/" + AUX_PORT + "/" + VIDEO_PORT);
+
+        announce();
+
+        long deadline = System.currentTimeMillis() + 25_000;
+        while (!closed && System.currentTimeMillis() < deadline) {
+            if (signedHuid != null && videoSocket != null && mediaReady && reverseControl != null) {
+                state = "STREAMING";
+                LogBus.log("媒体协商完成，等待仪表逐帧请求");
+                return;
+            }
+            try {
+                Thread.sleep(150);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("等待媒体协商被中断", e);
+            }
+        }
+        throw new IOException("媒体协商超时：请退出官方投屏后重新在仪表开启投屏");
     }
 
-    private void announce() throws IOException, GeneralSecurityException {
+    /** 向仪表 10930 端口宣告本机投屏请求。 */
+    private void announce() throws IOException {
         try (Socket socket = new Socket()) {
             socket.bind(new InetSocketAddress(localIp, 0));
-            socket.connect(new InetSocketAddress(targetIp, DISCOVERY_PORT), 2000);
+            socket.connect(new InetSocketAddress(targetIp, DISCOVERY_PORT), 3000);
             JSONObject body = new JSONObject();
             try {
                 body.put("phoneType", "Android");
@@ -98,9 +139,8 @@ public final class ZeehoConnection {
             } catch (JSONException e) {
                 throw new IOException("构造投屏请求失败", e);
             }
-            OutputStream out = socket.getOutputStream();
-            out.write(ZeehoProtocol.control(CMD_ANNOUNCE, 0, body.toString().getBytes(StandardCharsets.UTF_8)));
-            out.flush();
+            write(socket, ZeehoProtocol.control(CMD_ANNOUNCE, 0,
+                    body.toString().getBytes(StandardCharsets.UTF_8)));
             ZeehoProtocol.Control reply = ZeehoProtocol.readControl(socket.getInputStream());
             if (reply.command != CMD_ANNOUNCE_ACK) {
                 throw new IOException(String.format("投屏请求被拒 cmd=0x%x", reply.command));
@@ -112,8 +152,9 @@ public final class ZeehoConnection {
                 throw new IOException("解析投屏应答失败", e);
             }
             if (!object.optBoolean("status")) {
-                throw new IOException("仪表未接受投屏请求");
+                throw new IOException("仪表未接受投屏请求，请确认仪表处于投屏模式");
             }
+            LogBus.log("仪表已接受投屏请求");
         }
     }
 
@@ -130,6 +171,8 @@ public final class ZeehoConnection {
             while (!closed) {
                 try {
                     Socket socket = server.accept();
+                    peers.add(socket);
+                    LogBus.log("仪表回连 TCP" + port);
                     pool.execute(() -> handler.handle(socket));
                 } catch (IOException e) {
                     if (!closed) state = "ACCEPT_ERROR: " + e.getMessage();
@@ -138,60 +181,162 @@ public final class ZeehoConnection {
         });
     }
 
+    /* ---------------- 会话控制通道 10922 ---------------- */
+
     private void handleControl(Socket socket) {
         try (socket) {
             while (!closed) {
                 ZeehoProtocol.Control request = ZeehoProtocol.readControl(socket.getInputStream());
                 byte[] payload = new byte[0];
-                if (request.command == CMD_DEVICE_INFO) {
-                    JSONObject object = new JSONObject(new String(request.payload, StandardCharsets.UTF_8));
-                    String receivedHuid = object.optString("HUID", "");
-                    if (receivedHuid.isEmpty()) throw new IOException("仪表身份为空");
-                    huid = receivedHuid;
-                    byte[] signature = identity.sign(receivedHuid);
-                    JSONObject reply = new JSONObject();
-                    reply.put("pxcVersion", "1.0.2");
-                    reply.put("phoneUUID", identity.phoneId());
-                    reply.put("phoneBrand", "Android");
-                    reply.put("phoneModel", "Android");
-                    reply.put("phoneOsVersion", "14");
-                    reply.put("phoneOs", "Android");
-                    reply.put("package", packageName);
-                    reply.put("versionCode", versionCode);
-                    reply.put("token", 0);
-                    reply.put("pubkey", Base64.encodeToString(identity.publicKeyDer(), Base64.DEFAULT));
-                    reply.put("encryptedHUID", Base64.encodeToString(signature, Base64.DEFAULT));
-                    reply.put("supportH264IFrame", true);
-                    reply.put("supportFunction", 128);
-                    reply.put("mirrorRequestReconnect", true);
-                    payload = reply.toString().getBytes(StandardCharsets.UTF_8);
-                } else if (request.command == CMD_TIME) {
-                    long now = System.currentTimeMillis();
-                    JSONObject reply = new JSONObject();
-                    reply.put("time", now);
-                    reply.put("currentTime", now);
-                    reply.put("currentTimeZone", java.util.TimeZone.getDefault().getID());
-                    payload = reply.toString().getBytes(StandardCharsets.UTF_8);
-                } else if (request.command == CMD_SESSION_START) {
-                    sendControl(socket, 0x204c0, 1, "{\"state\":0,\"msg\":\"\"}");
-                    sendControl(socket, 0x20020, 2, "{\"mode\":2,\"width\":480,\"height\":1024,\"enableAccessibility\":false,\"enableAOAHid\":false}");
-                    sendControl(socket, 0x20030, 3, "{\"mode\":1,\"width\":1024,\"height\":480,\"enableAccessibility\":false,\"enableAOAHid\":false}");
-                    write(socket, ZeehoProtocol.control(0x20050, 4, new byte[0]));
-                    sendControl(socket, 0x205a0, 5, "{\"isMaskVisible\":false}");
-                    sendControl(socket, CMD_MIRROR_START, 6, null);
-                    payload = new byte[0];
+                boolean reply = true;
+                switch ((int) request.command) {
+                    case 0x10000:
+                    case 0x10740:
+                    case 0x10040:
+                    case CMD_KEEPALIVE:
+                    case 0x10690:
+                    case 0x10780:
+                    case 0x103e0:
+                    case 0x80000010:
+                    case 0x20021:
+                    case 0x20031:
+                    case 0x204c1:
+                    case 0x20491:
+                    case 0x20051:
+                    case 0x20591:
+                    case 0x205a1:
+                    case 0x70000001:
+                        reply = request.command == 0x10000 || request.command == 0x10740
+                                || request.command == 0x10040;
+                        break;
+                    case CMD_DEVICE_INFO:
+                        payload = deviceInfoReply(request);
+                        break;
+                    case CMD_TIME:
+                        payload = timeReply();
+                        break;
+                    case CMD_SESSION_START:
+                        LogBus.log("收到开始同屏协商");
+                        break;
+                    default:
+                        LogBus.log(String.format("未处理的控制命令 0x%08x", request.command));
+                        reply = false;
+                        break;
                 }
-                write(socket, ZeehoProtocol.control(request.command + 1, request.identifier, payload));
+                if (reply) {
+                    write(socket, ZeehoProtocol.control(request.command + 1,
+                            request.identifier, payload));
+                }
+                if (request.command == CMD_SESSION_START && reverseControl == null) {
+                    reverseControl = socket;
+                    startMirror(socket);
+                    startHeartbeat();
+                }
             }
         } catch (Exception e) {
-            if (!closed) state = "CONTROL_ERROR: " + e.getMessage();
+            if (!closed) {
+                state = "CONTROL_ERROR: " + e.getMessage();
+                LogBus.log("控制通道异常：" + e.getMessage());
+            }
         }
     }
 
-    private void sendControl(Socket socket, long command, int identifier, String json) throws IOException {
-        byte[] payload = json == null ? new byte[0] : json.getBytes(StandardCharsets.UTF_8);
-        write(socket, ZeehoProtocol.control(command, identifier, payload));
+    private byte[] deviceInfoReply(ZeehoProtocol.Control request) throws IOException {
+        JSONObject object;
+        try {
+            object = new JSONObject(new String(request.payload, StandardCharsets.UTF_8));
+        } catch (JSONException e) {
+            throw new IOException("仪表设备资料无效", e);
+        }
+        String name = object.optString("HUName", "");
+        String receivedHuid = object.optString("HUID", "");
+        if (name.isEmpty() || receivedHuid.isEmpty()) {
+            throw new IOException("仪表设备资料不完整");
+        }
+        huid = receivedHuid;
+        byte[] signature = identity.sign(receivedHuid);
+        signedHuid = signature;
+        JSONObject reply = new JSONObject();
+        try {
+            reply.put("pxcVersion", "1.0.2");
+            reply.put("phoneUUID", identity.phoneId());
+            reply.put("phoneBrand", "Android");
+            reply.put("phoneModel", phoneModel);
+            reply.put("phoneOsVersion", osVersion);
+            reply.put("phoneOs", "Android");
+            reply.put("package", packageName);
+            reply.put("versionCode", versionCode);
+            reply.put("token", 0);
+            reply.put("pubkey", Base64.encodeToString(identity.publicKeyDer(), Base64.NO_WRAP));
+            reply.put("encryptedHUID", Base64.encodeToString(signature, Base64.NO_WRAP));
+            reply.put("bluetoothName", "");
+            reply.put("supportH264IFrame", true);
+            reply.put("supportFunction", 128);
+            reply.put("mirrorRequestReconnect", true);
+        } catch (JSONException e) {
+            throw new IOException("构造身份应答失败", e);
+        }
+        LogBus.log("已回应 RSA2048 身份 HUName=" + name);
+        return reply.toString().getBytes(StandardCharsets.UTF_8);
     }
+
+    private byte[] timeReply() throws IOException {
+        long now = System.currentTimeMillis();
+        JSONObject reply = new JSONObject();
+        try {
+            reply.put("time", now);
+            reply.put("currentTime", now + java.util.TimeZone.getDefault().getOffset(now));
+            reply.put("currentTimeZone", java.util.TimeZone.getDefault().getID());
+        } catch (JSONException e) {
+            throw new IOException("构造时间应答失败", e);
+        }
+        return reply.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** 收到 0x20000 后按抓包顺序下发同屏参数，最后 0x20590 通知开始。 */
+    private void startMirror(Socket socket) throws IOException {
+        sendJson(socket, 0x204c0, 1, "{\"state\":0,\"msg\":\"\"}");
+        sendJson(socket, 0x20020, 2, display(2));
+        sendJson(socket, 0x20030, 3, display(1));
+        write(socket, ZeehoProtocol.control(0x20050, 4, new byte[0]));
+        sendJson(socket, 0x205a0, 5, "{\"isMaskVisible\":false}");
+        sendJson(socket, CMD_MIRROR, 6, "{\"control\":1}");
+        LogBus.log("已发送开始投屏通知");
+    }
+
+    private String display(int mode) throws IOException {
+        JSONObject object = new JSONObject();
+        try {
+            object.put("displayRotation", 0);
+            object.put("width", mode == 2 ? HEIGHT : WIDTH);
+            object.put("height", mode == 2 ? WIDTH : HEIGHT);
+            object.put("enableAccessibility", false);
+            object.put("enableAOAHid", false);
+            object.put("mode", mode);
+        } catch (JSONException e) {
+            throw new IOException("构造显示参数失败", e);
+        }
+        return object.toString();
+    }
+
+    private void sendJson(Socket socket, int command, int identifier, String json) throws IOException {
+        write(socket, ZeehoProtocol.control(command, identifier,
+                json.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private void startHeartbeat() {
+        heartbeat.scheduleAtFixedRate(() -> {
+            Socket socket = reverseControl;
+            if (socket == null || closed) return;
+            try {
+                write(socket, ZeehoProtocol.control(CMD_KEEPALIVE, keepaliveId++, new byte[0]));
+            } catch (IOException e) {
+                if (!closed) LogBus.log("保活发送失败：" + e.getMessage());
+            }
+        }, 2, 2, TimeUnit.SECONDS);
+    }
+
+    /* ---------------- 媒体控制通道 10711 ---------------- */
 
     private void handleAuxiliary(Socket socket) {
         try (socket) {
@@ -199,85 +344,107 @@ public final class ZeehoConnection {
                 ZeehoProtocol.Auxiliary request = ZeehoProtocol.readAuxiliary(socket.getInputStream());
                 byte[] payload = new byte[0];
                 int response;
+                boolean reply = true;
                 switch (request.command) {
-                    case AUX_CONFIG: {
-                        int width = ZeehoProtocol.u16(request.payload, 0);
-                        int height = ZeehoProtocol.u16(request.payload, 2);
-                        if (width != 1024 || (height != 480 && height != 488)) {
-                            throw new IOException(String.format("仪表媒体尺寸异常 %dx%d", width, height));
-                        }
-                        byte[] echoed = java.util.Arrays.copyOfRange(request.payload, 32, request.payload.length);
-                        if (!identity.verify(echoed, currentHuid())) {
-                            throw new IOException("媒体身份回显不匹配");
-                        }
-                        java.nio.ByteBuffer buffer = java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        buffer.putInt(2);       // 2 = H.264
-                        buffer.putShort((short) 1024);
-                        buffer.putShort((short) 480);
-                        payload = buffer.array();
+                    case AUX_CONFIG:
+                        payload = mediaConfigReply(request);
                         response = AUX_CONFIG_ACK;
                         break;
-                    }
                     case AUX_MEDIA_START:
-                        response = AUX_MEDIA_START_ACK;
+                        if (!configured) throw new IOException("仪表在配置完成前请求媒体启动");
+                        write(socket, ZeehoProtocol.auxiliary(AUX_MEDIA_START_ACK, request.token, new byte[0]));
                         mediaReady = true;
                         state = "STREAMING";
-                        break;
-                    case AUX_PORT_INFO:
-                        java.nio.ByteBuffer portBuffer = java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        portBuffer.putInt(5002);
-                        portBuffer.putInt(1);
-                        payload = portBuffer.array();
-                        response = 0x31;
-                        break;
+                        LogBus.log("媒体通道就绪");
+                        reply = false;
+                        continue;
                     case 0x40:
                         response = 0x41;
                         break;
+                    case 0x30:
+                        payload = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+                                .putInt(5002).putInt(1).array();
+                        response = 0x31;
+                        break;
+                    case 0x60:
+                        payload = "{\"supportFunction\":0}".getBytes(StandardCharsets.UTF_8);
+                        response = 0x61;
+                        break;
+                    case 0x20:
+                        reply = false; // 不执行仪表反控触摸
+                        continue;
                     default:
                         response = 0x7f02;
+                        LogBus.log(String.format("媒体控制暂不支持 0x%04x", request.command));
                         break;
                 }
-                write(socket, ZeehoProtocol.auxiliary(response, request.token, payload));
+                if (reply) {
+                    write(socket, ZeehoProtocol.auxiliary(response, request.token, payload));
+                }
             }
         } catch (Exception e) {
-            if (!closed) state = "AUX_ERROR: " + e.getMessage();
+            if (!closed) {
+                state = "AUX_ERROR: " + e.getMessage();
+                LogBus.log("媒体通道异常：" + e.getMessage());
+            }
         }
     }
 
-    /** 控制通道保存的仪表 HUID，媒体通道用它校验签名回显。 */
-    private String currentHuid() {
-        return huid;
+    private byte[] mediaConfigReply(ZeehoProtocol.Auxiliary request) throws IOException {
+        if (request.payload.length < 32) throw new IOException("媒体配置载荷不足 32 字节");
+        int width = ZeehoProtocol.u16(request.payload, 0);
+        int height = ZeehoProtocol.u16(request.payload, 2);
+        if (width != WIDTH || (height != HEIGHT && height != 488)) {
+            throw new IOException(String.format("仪表媒体尺寸异常 %dx%d", width, height));
+        }
+        byte[] echoed = Base64.decode(request.payload, 32, request.payload.length - 32, Base64.DEFAULT);
+        if (signedHuid == null || !Arrays.equals(echoed, signedHuid)) {
+            throw new IOException("媒体身份回显不匹配");
+        }
+        if (!identity.verify(echoed, huid)) {
+            throw new IOException("媒体身份签名校验失败");
+        }
+        configured = true;
+        LogBus.log("媒体身份回显校验通过，仪表报告 " + width + "×" + height);
+        return ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+                .putInt(2).putShort((short) WIDTH).putShort((short) HEIGHT).array();
     }
+
+    /* ---------------- 视频通道 10710 ---------------- */
 
     private void handleVideo(Socket socket) {
         videoSocket = socket;
         try (socket) {
             while (!closed) {
                 ZeehoProtocol.Auxiliary request = ZeehoProtocol.readAuxiliary(socket.getInputStream());
-                if (request.command == AUX_PULL_FRAME) {
+                if (request.command == AUX_PULL_FRAME && request.payload.length == 0) {
                     frameRequests.offer(Boolean.TRUE);
+                } else {
+                    LogBus.log(String.format("视频通道收到异常拉帧 0x%04x/%d 字节",
+                            request.command, request.payload.length));
                 }
             }
         } catch (Exception e) {
-            if (!closed) state = "VIDEO_ERROR: " + e.getMessage();
+            if (!closed) LogBus.log("视频通道异常：" + e.getMessage());
         } finally {
             videoSocket = null;
         }
     }
 
-    /** 仪表逐帧拉取；没有拉帧请求时丢弃当前帧。 */
+    /** 仪表逐帧拉取；等待不到请求时丢弃当前帧，避免积压。 */
     public void sendFrame(VideoFrame frame) throws IOException {
-        if (!mediaReady || videoSocket == null) return;
+        Socket socket = videoSocket;
+        if (!mediaReady || socket == null) return;
         boolean requested;
         try {
-            requested = frameRequests.poll(100, TimeUnit.MILLISECONDS) != null;
+            requested = frameRequests.poll(2, TimeUnit.SECONDS) != null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("等待仪表拉帧被中断", e);
         }
-        if (!requested) return;
+        if (!requested || closed) return;
         byte[] packet = ZeehoProtocol.h264(frame.accessUnit, !sentPrefix);
-        write(videoSocket, packet);
+        write(socket, packet);
         sentPrefix = true;
     }
 
@@ -296,21 +463,32 @@ public final class ZeehoConnection {
     }
 
     public void close() {
+        if (closed) return;
+        Socket reverse = reverseControl;
+        if (reverse != null) {
+            try {
+                write(reverse, ZeehoProtocol.control(CMD_MIRROR, 0xffffffff,
+                        "{\"control\":0}".getBytes(StandardCharsets.UTF_8)));
+            } catch (Exception ignored) {
+                // 停止通知失败不影响本地清理
+            }
+        }
         closed = true;
+        heartbeat.shutdownNow();
         for (ServerSocket server : servers) {
             try {
                 server.close();
             } catch (IOException ignored) {
             }
         }
-        Socket video = videoSocket;
-        if (video != null) {
+        for (Socket peer : peers) {
             try {
-                video.close();
+                peer.close();
             } catch (IOException ignored) {
             }
         }
         pool.shutdownNow();
         state = "CLOSED";
+        LogBus.log("极核会话已关闭");
     }
 }

@@ -34,7 +34,13 @@ public final class CastEngine implements PhoneVideoSource.Callback {
 
     public void stop() {
         state.set("STOPPING");
-        if (source != null) source.stop();
+        if (source != null) {
+            try {
+                source.stop();
+            } catch (Exception ignored) {
+                // 授权可能已失效，不影响输出侧清理
+            }
+        }
         if (output != null) output.stop();
         state.set("IDLE");
     }
@@ -55,11 +61,12 @@ public final class CastEngine implements PhoneVideoSource.Callback {
 
     @Override
     public void onState(String s) {
-        state.set(s);
+        if (!"SCREEN_CAPTURE_RUNNING".equals(s)) state.set(s);
     }
 
     @Override
     public void onError(Throwable error) {
         state.set("ERROR: " + error.getMessage());
+        com.github.carwithinforandroid.core.LogBus.log("引擎错误：" + error.getMessage());
     }
 }

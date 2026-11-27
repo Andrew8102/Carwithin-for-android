@@ -2,7 +2,9 @@ package com.github.carwithinforandroid.outputs.zeeho;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 
 import com.github.carwithinforandroid.core.DashboardOutput;
 import com.github.carwithinforandroid.core.VideoFrame;
@@ -27,9 +29,10 @@ public final class ZeehoOutput implements DashboardOutput {
             throw new IOException("本机身份初始化失败", e);
         }
         String localIp = localIp(context);
-        if (localIp == null) throw new IOException("未取得 Wi-Fi 地址");
+        if (localIp == null) throw new IOException("未取得 Wi-Fi 地址，请先连接仪表 Wi-Fi");
         connection = new ZeehoConnection(localIp, null, identity,
-                context.getPackageName(), versionCode(context));
+                context.getPackageName(), versionCode(context),
+                Build.MODEL, String.valueOf(Build.VERSION.SDK_INT));
         try {
             connection.start();
         } catch (GeneralSecurityException e) {
@@ -55,14 +58,23 @@ public final class ZeehoOutput implements DashboardOutput {
         return connection == null ? "IDLE" : connection.status();
     }
 
+    public String targetIp() {
+        return connection == null ? null : connection.targetIp();
+    }
+
     private static String localIp(Context context) {
         WifiManager wifi = (WifiManager) context.getApplicationContext()
                 .getSystemService(Context.WIFI_SERVICE);
         if (wifi == null) return null;
-        int value = wifi.getConnectionInfo().getIpAddress();
-        if (value == 0) return null;
-        return (value & 0xff) + "." + ((value >> 8) & 0xff) + "."
-                + ((value >> 16) & 0xff) + "." + ((value >> 24) & 0xff);
+        try {
+            WifiInfo info = wifi.getConnectionInfo();
+            int value = info.getIpAddress();
+            if (value == 0) return null;
+            return (value & 0xff) + "." + ((value >> 8) & 0xff) + "."
+                    + ((value >> 16) & 0xff) + "." + ((value >> 24) & 0xff);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static int versionCode(Context context) {
